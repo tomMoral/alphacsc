@@ -8,29 +8,41 @@ mem = Memory(location='.', verbose=0)
 
 
 @mem.cache(ignore=['n_jobs'])
-def load_data(sfreq=None, epoch=(-2, 4), n_jobs=1, filt=[2., None],
-              n_splits=10, return_epochs=False):
+def load_data(n_splits=10, sfreq=None, epoch=None, filter_params=[2., None],
+              n_jobs=1):
     """Load and prepare the somato dataset for multiCSC
 
 
     Parameters
     ----------
-    sfreq: float
+    n_splits : int
+        Split the signal in n_split signals of same length before returning it.
+        If epoch is provided, the signal is instead splitted according to the
+        epochs and this option is not followed.
+    sfreq : float
         Sampling frequency of the signal. The data are resampled to match it.
     epoch : tuple or None
         If set to a tuple, extract epochs from the raw data, using
         t_min=epoch[0] and t_max=epoch[1]. Else, use the raw signal, divided
         in n_splits chunks.
+    filter_params : tuple, (default: [2., None])
+        Frequency cut for a band pass filter applied to the signals. The
+        default is a high-pass filter with frequency cut at 2Hz.
     n_jobs : int
         Number of jobs that can be used for preparing (filtering) the data.
-    return_epochs : boolean
-        If True, return epochs instead of X and info
+
+    Return
+    ------
+    X : ndarray, shape (n_splits, n_channels, n_times)
+        Signals loaded from HCP
+    info : mne.Info
+        Info related to each signals.
     """
     data_path = os.path.join(mne.datasets.somato.data_path(), 'MEG', 'somato')
     raw = mne.io.read_raw_fif(
         os.path.join(data_path, 'sef_raw_sss.fif'), preload=True)
     raw.notch_filter(np.arange(50, 101, 50), n_jobs=n_jobs)
-    raw.filter(*filt, n_jobs=n_jobs)
+    raw.filter(*filter_params, n_jobs=n_jobs)
     event_id = 1
 
     t_min = -2
@@ -49,8 +61,6 @@ def load_data(sfreq=None, epoch=(-2, 4), n_jobs=1, filt=[2., None],
             epochs.resample(sfreq, npad='auto')
         X = epochs.get_data()
         info = epochs.info
-        if return_epochs:
-            return epochs
 
     else:
         raw.pick_types(meg='grad', eog=False, stim=True)
@@ -67,9 +77,6 @@ def load_data(sfreq=None, epoch=(-2, 4), n_jobs=1, filt=[2., None],
         X = X[:, :n_splits * n_times]
         X = X.reshape(n_channels, n_splits, n_times).swapaxes(0, 1)
         info = raw.info
-        if return_epochs:
-            raise ValueError('return_epochs=True is not allowed with '
-                             'epochs=False')
 
     # XXX: causes problems when saving EvokedArray
     info['t_min'] = t_min
