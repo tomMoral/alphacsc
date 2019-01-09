@@ -16,6 +16,8 @@ def test_init_array(rank1, uv_constraint):
     n_trials, n_channels, n_times = 5, 3, 100
     n_times_atom, n_atoms = 10, 4
 
+    rng = check_random_state(27)
+
     if rank1:
         expected_shape = (n_atoms, n_channels + n_times_atom)
         prox = functools.partial(prox_uv, uv_constraint=uv_constraint,
@@ -24,10 +26,10 @@ def test_init_array(rank1, uv_constraint):
         expected_shape = (n_atoms, n_channels, n_times_atom)
         prox = prox_d
 
-    X = np.random.randn(n_trials, n_channels, n_times)
+    X = rng.randn(n_trials, n_channels, n_times)
 
     # Test that init_dictionary is doing what we expect for D_init array
-    D_init = np.random.randn(*expected_shape)
+    D_init = rng.randn(*expected_shape)
     D_hat = init_dictionary(X, n_atoms, n_times_atom, D_init=D_init,
                             rank1=rank1, uv_constraint=uv_constraint)
 
@@ -36,7 +38,7 @@ def test_init_array(rank1, uv_constraint):
     assert id(D_hat) != id(D_init)
 
     # Test that learn_d_z_multi is doing what we expect for D_init array
-    D_init = np.random.randn(*expected_shape)
+    D_init = rng.randn(*expected_shape)
     _, _, D_hat, _, _ = learn_d_z_multi(
         X, n_atoms, n_times_atom, D_init=D_init, n_iter=0, rank1=rank1,
         uv_constraint=uv_constraint)
@@ -52,6 +54,8 @@ def test_init_random(rank1, uv_constraint):
     n_trials, n_channels, n_times = 5, 3, 100
     n_times_atom, n_atoms = 10, 4
 
+    rng = check_random_state(0)
+
     if rank1:
         expected_shape = (n_atoms, n_channels + n_times_atom)
         prox = functools.partial(prox_uv, uv_constraint=uv_constraint,
@@ -60,7 +64,7 @@ def test_init_random(rank1, uv_constraint):
         expected_shape = (n_atoms, n_channels, n_times_atom)
         prox = prox_d
 
-    X = np.random.randn(n_trials, n_channels, n_times)
+    X = rng.randn(n_trials, n_channels, n_times)
 
     # Test that init_dictionary is doing what we expect for D_init random
     random_state = 42
@@ -95,7 +99,9 @@ def test_init_shape(D_init, rank1):
     n_trials, n_channels, n_times = 5, 3, 100
     n_times_atom, n_atoms = 10, 4
 
-    X = np.random.randn(n_trials, n_channels, n_times)
+    rng = check_random_state(42)
+
+    X = rng.randn(n_trials, n_channels, n_times)
 
     expected_shape = (n_atoms, n_channels, n_times_atom)
     if rank1:

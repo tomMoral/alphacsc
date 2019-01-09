@@ -1,6 +1,10 @@
 import numpy as np
 
+from alphacsc.utils import check_random_state
 from alphacsc.utils.optim import fista, power_iteration
+
+
+rng_test = check_random_state(42)
 
 
 def test_ista():
@@ -8,9 +12,9 @@ def test_ista():
 
     # || Ax - b ||_2^2
     n, p = 100, 10
-    x = np.random.randn(p)
+    x = rng_test.randn(p)
     x /= np.linalg.norm(x)
-    A = np.random.randn(n, p)
+    A = rng_test.randn(n, p)
     b = np.dot(A, x)
 
     def obj(x):
@@ -23,7 +27,7 @@ def test_ista():
     def prox(x):
         return x / max(np.linalg.norm(x), 1.)
 
-    x0 = np.random.rand(p)
+    x0 = rng_test.rand(p)
     L = power_iteration(A.dot(A.T))
     step_size = 0.99 / L
     x_hat, pobj = fista(obj, grad, prox, step_size, x0, max_iter=600,

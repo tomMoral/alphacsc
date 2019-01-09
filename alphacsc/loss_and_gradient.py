@@ -6,12 +6,14 @@
 
 import numpy as np
 
+from .utils import construct_X_multi
+from .utils.whitening import apply_whitening
 from .utils.convolution import numpy_convolve_uv
 from .utils.convolution import tensordot_convolve
 from .utils.convolution import _choose_convolve_multi
-from .utils.whitening import apply_whitening
+from .utils.convolution import dense_transpose_convolve_z
+from .utils.convolution import dense_transpose_convolve_d
 from .utils.lil import scale_z_by_atom, safe_sum, get_z_shape, is_list_of_lil
-from .utils import construct_X_multi
 
 try:
     from .other import sdtw as _sdtw
@@ -205,13 +207,15 @@ def gradient_uv(uv, X=None, z=None, constants=None, reg=None, loss='l2',
         uv = uv.reshape((n_atoms, -1))
 
     if loss == 'l2':
-        cost, grad_d = _l2_gradient_d(D=uv, X=X, z=z, constants=constants)
+        cost, grad_d = _l2_gradient_d(D=uv, X=X, z=z, constants=constants,
+                                      return_func=return_func)
     elif loss == 'dtw':
         _assert_dtw()
         cost, grad_d = _dtw_gradient_d(D=uv, X=X, z=z, loss_params=loss_params)
     elif loss == 'whitening':
         cost, grad_d = _whitening_gradient_d(D=uv, X=X, z=z,
-                                             loss_params=loss_params)
+                                             loss_params=loss_params,
+                                             return_func=return_func)
     else:
         raise NotImplementedError("loss {} is not implemented.".format(loss))
     grad_u = (grad_d * uv[:, None, n_channels:]).sum(axis=2)
@@ -316,13 +320,15 @@ def gradient_d(D=None, X=None, z=None, constants=None, reg=None,
         raise NotImplementedError()
 
     if loss == 'l2':
-        cost, grad_d = _l2_gradient_d(D=D, X=X, z=z, constants=constants)
+        cost, grad_d = _l2_gradient_d(D=D, X=X, z=z, constants=constants,
+                                      return_func=return_func)
     elif loss == 'dtw':
         _assert_dtw()
         cost, grad_d = _dtw_gradient_d(D=D, X=X, z=z, loss_params=loss_params)
     elif loss == 'whitening':
         cost, grad_d = _whitening_gradient_d(D=D, X=X, z=z,
-                                             loss_params=loss_params)
+                                             loss_params=loss_params,
+                                             return_func=return_func)
     else:
         raise NotImplementedError("loss {} is not implemented.".format(loss))
 
@@ -377,7 +383,7 @@ def _dtw_gradient(X, z, D=None, loss_params=dict()):
 def _dtw_gradient_d(D, X=None, z=None, loss_params={}):
     cost, grad_X_hat = _dtw_gradient(X, z, D=D, loss_params=loss_params)
 
-    return cost, _dense_transpose_convolve_z(grad_X_hat, z)
+    return cost, dense_transpose_convolve_z(grad_X_hat, z)
 
 
 def _dtw_gradient_zi(Xi, z_i, D=None, loss_params={}):
@@ -385,23 +391,31 @@ def _dtw_gradient_zi(Xi, z_i, D=None, loss_params={}):
     cost_i, grad_Xi_hat = _dtw_gradient(Xi[None], z_i[None], D=D,
                                         loss_params=loss_params)
 
-    return cost_i, _dense_transpose_convolve_d(
-        grad_Xi_hat[0], D=D, n_channels=n_channels)
+    return cost_i, dense_transpose_convolve_d(grad_Xi_hat[0], D=D,
+                                              n_channels=n_channels)
 
 
-def _l2_gradient_d(D, X=None, z=None, constants=None):
+def _l2_gradient_d(D, X=None, z=None, constants=None, return_func=False):
 
+    cost = None
     if constants:
         assert D is not None
         if D.ndim == 2:
             g = numpy_convolve_uv(constants['ztz'], D)
         else:
             g = tensordot_convolve(constants['ztz'], D)
-        return None, g - constants['ztX']
+        if return_func:
+            cost = .5 * g - constants['ztX']
+            cost = grad_D_dot_D(cost, D, constants=constants)
+            if 'XtX' in constants:
+                cost += constants['XtX']
+        return cost, g - constants['ztX']
     else:
         n_channels = X.shape[1]
         residual = construct_X_multi(z, D=D, n_channels=n_channels) - X
-        return None, _dense_transpose_convolve_z(residual, z)
+        if return_func:
+            cost = 0.5 * np.dot(residual.ravel(), residual.ravel())
+        return cost, dense_transpose_convolve_z(residual, z)
 
 
 def _l2_objective(X=None, X_hat=None, D=None, constants=None):
@@ -409,18 +423,9 @@ def _l2_objective(X=None, X_hat=None, D=None, constants=None):
     if constants:
         # Fast compute the l2 objective when updating uv/D
         assert D is not None, "D is needed to fast compute the objective."
-        if D.ndim == 2:
-            # rank 1 dictionary, use uv computation
-            n_channels = constants['n_channels']
-            grad_d = .5 * numpy_convolve_uv(constants['ztz'], D)
-            grad_d -= constants['ztX']
-            cost = (grad_d * D[:, None, n_channels:]).sum(axis=2)
-            cost = np.dot(cost.ravel(), D[:, :n_channels].ravel())
-        else:
-            grad_d = .5 * tensordot_convolve(constants['ztz'], D)
-            grad_d -= constants['ztX']
-            cost = (D * grad_d).sum()
-
+        grad_d = .5 * _l2_gradient_d(D, constants=constants)[1]
+        grad_d -= constants['ztX']
+        cost = grad_D_dot_D(grad_d, D, constants=constants)
         cost += .5 * constants['XtX']
         return cost
 
@@ -428,6 +433,26 @@ def _l2_objective(X=None, X_hat=None, D=None, constants=None):
     assert X is not None and X_hat is not None
     residual = X - X_hat
     return 0.5 * np.dot(residual.ravel(), residual.ravel())
+
+
+def grad_D_dot_D(grad_D, D, constants=None):
+    """Compute the dot product between grad_D and D
+
+    grad_D : ndarray, shape (n_atoms, n_channels, n_times_atom)
+    grad_D : ndarray, shape (n_atoms, n_channels, n_times_atom) or
+                      shape (n_atoms, n_channels + n_times_atom)
+    n_channels : int
+        Number of channels. Required when D is rank1
+    """
+
+    if D.ndim == 2:
+        # rank 1 dictionary, use uv computation
+        n_channels = constants['n_channels']
+        res = (grad_D * D[:, None, n_channels:]).sum(axis=2)
+        res = np.dot(res.ravel(), D[:, :n_channels].ravel())
+    else:
+        res = np.dot(D.ravel(), grad_D.ravel())
+    return res
 
 
 def _l2_gradient_zi(Xi, z_i, D=None, return_func=False):
@@ -466,7 +491,7 @@ def _l2_gradient_zi(Xi, z_i, D=None, return_func=False):
     else:
         func = None
 
-    grad = _dense_transpose_convolve_d(Dz_i, D=D, n_channels=n_channels)
+    grad = dense_transpose_convolve_d(Dz_i, D=D, n_channels=n_channels)
 
     return func, grad
 
@@ -501,75 +526,21 @@ def _whitening_gradient_zi(Xi, z_i, D, loss_params, return_func=False):
                                         return_func=return_func)
 
     # Use the chain rule to compute the gradient compared to z_i
-    grad = _dense_transpose_convolve_d(hTh_res[0], D=D, n_channels=n_channels)
+    grad = dense_transpose_convolve_d(hTh_res[0], D=D, n_channels=n_channels)
     assert grad.shape == z_i.shape
 
     return func, grad
 
 
-def _whitening_gradient_d(D, X, z, loss_params):
+def _whitening_gradient_d(D, X, z, loss_params, return_func=False):
     n_channels = X.shape[1]
 
     # Construct Xi_hat and compute the gradient relatively to X_hat
     X_hat = construct_X_multi(z, D=D, n_channels=n_channels)
     hTh_res, func = _whitening_gradient(X, X_hat, loss_params,
-                                        return_func=False)
+                                        return_func=return_func)
 
     # Use the chain rule to compute the gradient compared to D
-    grad = _dense_transpose_convolve_z(hTh_res, z)
+    grad = dense_transpose_convolve_z(hTh_res, z)
 
-    return None, grad
-
-
-def _dense_transpose_convolve_z(residual, z):
-    """Convolve residual[i] with the transpose for each atom k, and return the sum
-
-    Parameters
-    ----------
-    residual : array, shape (n_trials, n_channels, n_times)
-    z : array, shape (n_trials, n_atoms, n_times_valid)
-
-    Return
-    ------
-    grad_D : array, shape (n_atoms, n_channels, n_times_atom)
-
-    """
-    if is_list_of_lil(z):
-        raise NotImplementedError()
-
-    return np.sum([[[np.convolve(res_ip, z_ik[::-1],
-                                 mode='valid')                   # n_times_atom
-                     for res_ip in res_i]                        # n_channnels
-                    for z_ik in z_i]                             # n_atoms
-                   for z_i, res_i in zip(z, residual)], axis=0)  # n_atoms
-
-
-def _dense_transpose_convolve_d(residual_i, D=None, n_channels=None):
-    """Convolve residual[i] with the transpose for each atom k
-
-    Parameters
-    ----------
-    residual_i : array, shape (n_channels, n_times)
-    D : array, shape (n_atoms, n_channels, n_times_atom) or
-               shape (n_atoms, n_channels + n_times_atom)
-
-    Return
-    ------
-    grad_zi : array, shape (n_atoms, n_times_valid)
-
-    """
-
-    if D.ndim == 2:
-        # multiply by the spatial filter u
-        uR_i = np.dot(D[:, :n_channels], residual_i)
-
-        # Now do the dot product with the transpose of D (D.T) which is
-        # the conv by the reversed filter (keeping valid mode)
-        return np.array([
-            np.convolve(uR_ik, v_k[::-1], 'valid')
-            for (uR_ik, v_k) in zip(uR_i, D[:, n_channels:])
-        ])
-    else:
-        return np.sum([[np.correlate(res_ip, d_kp, mode='valid')
-                        for res_ip, d_kp in zip(residual_i, d_k)]
-                       for d_k in D[..., ::-1]], axis=1)
+    return func, grad

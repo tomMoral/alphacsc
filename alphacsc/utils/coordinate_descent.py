@@ -6,14 +6,17 @@ from scipy import sparse
 
 from .lil import is_lil
 from .. import cython_code
+from . import check_random_state
 from ..loss_and_gradient import gradient_zi
+from .prox_operator import soft_thresholding
 from .convolution import _choose_convolve_multi
 
 
 def _coordinate_descent_idx(Xi, D, constants, reg, z0=None, max_iter=1000,
                             tol=1e-1, strategy='greedy', n_seg='auto',
-                            freeze_support=False, debug=False, timing=False,
-                            name="CD", verbose=0):
+                            z_positive=True, freeze_support=False, debug=False,
+                            timing=False, random_state=None, name="CD",
+                            verbose=0):
     """Compute the coding signal associated to Xi with coordinate descent.
 
     Parameters
@@ -37,6 +40,8 @@ def _coordinate_descent_idx(Xi, D, constants, reg, z0=None, max_iter=1000,
     n_seg : int or 'auto'
         Number of segments used to divide the coding signal. The updates are
         performed successively on each of these segments.
+    z_positive : boolean
+        If set to True, constrains the coefficient to be positive.
     freeze_support : boolean
         If set to True, only update the coefficient that are non-zero in z0.
     debug : boolean
@@ -66,6 +71,8 @@ def _coordinate_descent_idx(Xi, D, constants, reg, z0=None, max_iter=1000,
             n_seg = 1
             n_coordinates = n_times_valid * n_atoms
 
+    rng = check_random_state(random_state)
+
     max_iter *= n_seg
     n_times_seg = n_times_valid // n_seg + 1
 
@@ -85,7 +92,7 @@ def _coordinate_descent_idx(Xi, D, constants, reg, z0=None, max_iter=1000,
         t_start = time.time()
 
     beta, dz_opt = _init_beta(Xi, z_hat, D, constants, reg, norm_Dk,
-                              tol, use_sparse_dz=False)
+                              tol, z_positive=z_positive, use_sparse_dz=False)
 
     # If we freeze the support, we put dz_opt to zero outside the support of z0
     if freeze_support:
@@ -105,7 +112,7 @@ def _coordinate_descent_idx(Xi, D, constants, reg, z0=None, max_iter=1000,
     for ii in range(int(max_iter)):
         k0, t0, dz = _select_coordinate(strategy, dz_opt, active_segs[i_seg],
                                         n_atoms, n_times_valid, n_times_seg,
-                                        seg_bounds)
+                                        seg_bounds, random_state=rng)
         if strategy in ['random', 'cyclic']:
             # accumulate on all coordinates from the stopping criterion
             if ii % n_coordinates == 0:
@@ -122,7 +129,8 @@ def _coordinate_descent_idx(Xi, D, constants, reg, z0=None, max_iter=1000,
             beta, dz_opt, accumulator, active_segs = _update_beta(
                 beta, dz_opt, accumulator, active_segs, z_hat, DtD, norm_Dk,
                 dz, k0, t0, reg, tol, seg_bounds, i_seg, n_times_atom, z0,
-                freeze_support, debug)
+                z_positive=z_positive, freeze_support=freeze_support,
+                debug=debug)
 
         elif active_segs[i_seg]:
             accumulator -= 1
@@ -166,7 +174,7 @@ def _coordinate_descent_idx(Xi, D, constants, reg, z0=None, max_iter=1000,
 
 
 def _init_beta(Xi, z_hat, D, constants, reg, norm_Dk, tol,
-               use_sparse_dz=False):
+               z_positive=True, use_sparse_dz=False):
     # Init beta with -DtX
     beta = gradient_zi(Xi, z_hat, D=D, reg=None, loss='l2',
                        return_func=False, constants=constants)
@@ -184,7 +192,7 @@ def _init_beta(Xi, z_hat, D, constants, reg, norm_Dk, tol,
         cython_code.update_dz_opt(z_hat, beta, dz_opt, norm_Dk[:, 0], reg,
                                   t_start=0, t_end=n_times_valid)
     else:
-        dz_opt = np.maximum(-beta - reg, 0) / norm_Dk - z_hat
+        dz_opt = soft_thresholding(-beta, reg, z_positive) / norm_Dk - z_hat
 
     if use_sparse_dz:
         dz_opt[abs(dz_opt) < tol] = 0
@@ -195,7 +203,7 @@ def _init_beta(Xi, z_hat, D, constants, reg, norm_Dk, tol,
 
 def _update_beta(beta, dz_opt, accumulator, active_segs, z_hat, DtD, norm_Dk,
                  dz, k0, t0, reg, tol, seg_bounds, i_seg, n_times_atom, z0,
-                 freeze_support, debug):
+                 z_positive, freeze_support, debug):
     n_atoms, n_times_valid = beta.shape
 
     # define the bounds for the beta update
@@ -215,8 +223,9 @@ def _update_beta(beta, dz_opt, accumulator, active_segs, z_hat, DtD, norm_Dk,
         cython_code.update_dz_opt(
             z_hat, beta, dz_opt, norm_Dk[:, 0], reg, t_start_up, t_end_up)
     else:
-        tmp = np.maximum(-beta[:, t_start_up:t_end_up] - reg, 0) / norm_Dk
-        dz_opt[:, t_start_up:t_end_up] = tmp - z_hat[:, t_start_up:t_end_up]
+        update_slice = (slice(None), slice(t_start_up, t_end_up))
+        tmp = soft_thresholding(-beta[update_slice], reg, z_positive) / norm_Dk
+        dz_opt[update_slice] = tmp - z_hat[update_slice]
     dz_opt[k0, t0] = 0
 
     # reunable greedy updates in the segments immediately before or after
@@ -249,11 +258,12 @@ def _update_beta(beta, dz_opt, accumulator, active_segs, z_hat, DtD, norm_Dk,
 
 
 def _select_coordinate(strategy, dz_opt, active_seg, n_atoms, n_times_valid,
-                       n_times_seg, seg_bounds):
+                       n_times_seg, seg_bounds, random_state):
     # Pick a coordinate to update
     if strategy == 'random':
-        k0 = np.random.randint(n_atoms)
-        t0 = np.random.randint(n_times_valid)
+        rng = check_random_state(random_state)
+        k0 = rng.randint(n_atoms)
+        t0 = rng.randint(n_times_valid)
         dz = dz_opt[k0, t0]
 
     elif strategy == 'cyclic':

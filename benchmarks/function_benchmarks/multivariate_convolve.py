@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from joblib import Memory
 import matplotlib.pyplot as plt
-from scipy.signal import fftconvolve
+from scipy import signal
 from scipy.stats.mstats import gmean
 
 memory = Memory(location='', verbose=0)
@@ -23,7 +23,25 @@ def scipy_fftconvolve(ztz, D):
     for k0 in range(n_atoms):
         for k1 in range(n_atoms):
             for p in range(n_channels):
-                G[k0, p] += fftconvolve(ztz[k0, k1], D[k1, p], mode='valid')
+                G[k0, p] += signal.fftconvolve(ztz[k0, k1], D[k1, p],
+                                               mode='valid')
+    return G
+
+
+def scipy_convolve(ztz, D):
+    """
+    ztz.shape = n_atoms, n_atoms, 2 * n_times_atom - 1
+    D.shape = n_atoms, n_channels, n_times_atom
+    """
+    n_atoms, n_channels, n_times_atom = D.shape
+    # TODO: try with zero padding to next_fast_len
+
+    G = np.zeros(D.shape)
+    for k0 in range(n_atoms):
+        for k1 in range(n_atoms):
+            for p in range(n_channels):
+                G[k0, p] += signal.convolve(ztz[k0, k1], D[k1, p],
+                                            mode='valid')
     return G
 
 
@@ -59,7 +77,7 @@ def dot_and_numba(ztz, D):
     return G
 
 
-@numba.jit(nogil=True)
+@numba.njit(nogil=True)
 def sum_and_numba(ztz, D):
     """
     ztz.shape = n_atoms, n_atoms, 2 * n_times_atom - 1
@@ -113,13 +131,38 @@ def numpy_convolve_uv(ztz, uv):
     return G
 
 
+def scipy_convolve_uv(ztz, uv):
+    """
+    ztz.shape = n_atoms, n_atoms, 2 * n_times_atom - 1
+    uv.shape = n_atoms, n_channels + n_times_atom
+    """
+    assert uv.ndim == 2
+    n_times_atom = (ztz.shape[2] + 1) // 2
+    n_atoms = ztz.shape[0]
+    n_channels = uv.shape[1] - n_times_atom
+
+    u = uv[:, :n_channels]
+    v = uv[:, n_channels:]
+
+    G = np.zeros((n_atoms, n_channels, n_times_atom))
+    for k0 in range(n_atoms):
+        for k1 in range(n_atoms):
+            G[k0, :, :] += (signal.convolve(
+                ztz[k0, k1], v[k1], mode='valid')[None, :] * u[k1, :][:, None])
+
+    return G
+
+
 all_func = [
     numpy_convolve,
     # scipy_fftconvolve,
+    # scipy_convolve,
     dot_and_numba,
     sum_and_numba,
     tensordot,
     numpy_convolve_uv,
+    scipy_convolve_uv,
+
 ]
 
 

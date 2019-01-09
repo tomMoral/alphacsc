@@ -1,38 +1,16 @@
 import pytest
 import numpy as np
-from scipy import optimize, signal
+from scipy import optimize
 
+from alphacsc.utils import construct_X_multi
+from alphacsc.utils import check_random_state
+from alphacsc.utils.whitening import whitening
 from alphacsc.loss_and_gradient import compute_objective
 from alphacsc.loss_and_gradient import gradient_d, gradient_uv
 from alphacsc.update_d_multi import update_uv, prox_uv, _get_d_update_constants
-from alphacsc.utils.whitening import whitening
-from alphacsc.utils import construct_X_multi
 
 
-DEBUG = True
-
-
-def test_simple():
-    T = 100
-    L = 10
-    S = T - L + 1
-    x = np.random.random(T)
-    z = np.random.random(S)
-    d = np.random.random(L)
-
-    def func(d0):
-        xr = signal.convolve(z, d0)
-        residual = x - xr
-        return .5 * np.sum(residual * residual)
-
-    def grad(d0):
-        xr = signal.convolve(z, d0)
-        residual = x - xr
-        grad_d = - signal.convolve(residual, z[::-1], mode='valid')
-        return grad_d
-
-    error = optimize.check_grad(func, grad, d, epsilon=1e-8)
-    assert error < 1e-4, "Gradient is false: {:.4e}".format(error)
+DEBUG = False
 
 
 @pytest.mark.parametrize('loss', ['l2', 'dtw', 'whitening'])
@@ -46,7 +24,7 @@ def test_gradient_d(loss):
     # Constant for the DTW loss
     loss_params = dict(gamma=1, sakoe_chiba_band=n_times_atom // 2)
 
-    rng = np.random.RandomState()
+    rng = check_random_state(724)
     X = rng.normal(size=(n_trials, n_channels, n_times))
     z = rng.normal(size=(n_trials, n_atoms, n_times - n_times_atom + 1))
     d = rng.normal(size=(n_atoms, n_channels, n_times_atom)).ravel()
@@ -91,7 +69,7 @@ def test_gradient_uv(loss):
     n_trials = 3
     loss_params = dict(gamma=1, sakoe_chiba_band=n_times_atom // 2)
 
-    rng = np.random.RandomState()
+    rng = check_random_state(1)
     X = rng.normal(size=(n_trials, n_channels, n_times))
     z = rng.normal(size=(n_trials, n_atoms, n_times - n_times_atom + 1))
     uv = rng.normal(size=(n_atoms, n_channels + n_times_atom)).ravel()
@@ -149,7 +127,7 @@ def test_update_uv(solver_d, uv_constraint):
     n_atoms = 2
     n_trials = 3
 
-    rng = np.random.RandomState()
+    rng = check_random_state(3)
     z = rng.normal(size=(n_trials, n_atoms, n_times - n_times_atom + 1))
     uv0 = rng.normal(size=(n_atoms, n_channels + n_times_atom))
     uv1 = rng.normal(size=(n_atoms, n_channels + n_times_atom))
@@ -198,7 +176,7 @@ def test_fast_cost():
     n_atoms = 2
     n_trials = 4
 
-    rng = np.random.RandomState()
+    rng = check_random_state(5)
     X = rng.normal(size=(n_trials, n_channels, n_times))
     z = rng.normal(size=(n_trials, n_atoms, n_times - n_times_atom + 1))
 
@@ -225,7 +203,7 @@ def test_constants_d():
     n_atoms = 2
     n_trials = 3
 
-    rng = np.random.RandomState()
+    rng = check_random_state(7)
     X = rng.normal(size=(n_trials, n_channels, n_times))
     z = rng.normal(size=(n_trials, n_atoms, n_times - n_times_atom + 1))
 

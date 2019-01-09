@@ -3,11 +3,12 @@ import numpy as np
 from scipy import sparse
 
 from alphacsc import cython_code
+from alphacsc.utils import construct_X_multi
+from alphacsc.utils import check_random_state
+from alphacsc.utils.whitening import whitening
 from alphacsc.update_z_multi import update_z_multi
 from alphacsc.update_z_multi import compute_DtD, _coordinate_descent_idx
 from alphacsc.loss_and_gradient import compute_X_and_objective_multi
-from alphacsc.utils.whitening import whitening
-from alphacsc.utils import construct_X_multi
 
 from alphacsc.utils.compute_constants import compute_ztz, compute_ztX
 
@@ -21,7 +22,7 @@ def test_update_z_multi_decrease_cost_function(loss, solver):
     reg = 0
     loss_params = dict(gamma=1, sakoe_chiba_band=n_times_atom // 2)
 
-    rng = np.random.RandomState(0)
+    rng = check_random_state(0)
     X = rng.randn(n_trials, n_channels, n_times)
     uv = rng.randn(n_atoms, n_channels + n_times_atom)
     z = rng.randn(n_trials, n_atoms, n_times_valid)
@@ -55,7 +56,7 @@ def test_support_least_square(solver_z):
     reg = 0.1
     solver_kwargs = {'factr': 1e7}
 
-    rng = np.random.RandomState(0)
+    rng = check_random_state(2)
     X = rng.randn(n_trials, n_channels, n_times)
     uv = rng.randn(n_atoms, n_channels + n_times_atom)
     z = rng.randn(n_trials, n_atoms, n_times_valid)
@@ -96,7 +97,7 @@ def test_cd(use_sparse_lil):
     n_times_valid = n_times - n_times_atom + 1
     reg = 1
 
-    rng = np.random.RandomState(0)
+    rng = check_random_state(4)
     uv = rng.randn(n_atoms, n_channels + n_times_atom)
     if use_sparse_lil:
         density = .1

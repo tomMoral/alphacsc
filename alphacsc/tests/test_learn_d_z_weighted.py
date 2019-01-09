@@ -1,5 +1,6 @@
 import numpy as np
 
+from alphacsc.utils import check_random_state
 from alphacsc.learn_d_z_mcem import learn_d_z_weighted
 
 
@@ -7,7 +8,7 @@ def test_learn_d_z_weighted():
     """Test the output shapes."""
     n_atoms, n_times_atom = 3, 10
     n_trials, n_times = 2, 100
-    rng = np.random.RandomState(0)
+    rng = check_random_state(0)
     X = rng.randn(n_trials, n_times)
 
     d_hat, z_hat, tau = learn_d_z_weighted(X, n_atoms, n_times_atom,

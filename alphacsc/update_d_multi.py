@@ -17,7 +17,8 @@ from .loss_and_gradient import compute_objective, compute_X_and_objective_multi
 from .loss_and_gradient import gradient_uv, gradient_d
 
 
-def prox_uv(uv, uv_constraint='joint', n_channels=None, return_norm=False):
+def prox_uv(uv, step_size=0, uv_constraint='joint', n_channels=None,
+            return_norm=False):
     if uv_constraint == 'joint':
         norm_uv = np.maximum(1, np.linalg.norm(uv, axis=1))
         uv /= norm_uv[:, None]
@@ -39,7 +40,7 @@ def prox_uv(uv, uv_constraint='joint', n_channels=None, return_norm=False):
         return uv
 
 
-def prox_d(D, return_norm=False):
+def prox_d(D, step_size=0, return_norm=False):
     norm_d = np.maximum(1, np.linalg.norm(D, axis=(1, 2)))
     D /= norm_d[:, None, None]
 
@@ -136,7 +137,7 @@ def update_uv(X, z, uv_hat0, constants=None, b_hat_0=None, debug=False,
                 grad[:, n_channels:] *= tukey_window_
             return grad
 
-        def prox(uv):
+        def prox(uv, step_size=0):
             if window:
                 uv[:, n_channels:] *= tukey_window_
             uv = prox_uv(uv, uv_constraint=uv_constraint,
@@ -158,11 +159,11 @@ def update_uv(X, z, uv_hat0, constants=None, b_hat_0=None, debug=False,
         uv_hat = uv_hat0.copy()
         u_hat, v_hat = uv_hat[:, :n_channels], uv_hat[:, n_channels:]
 
-        def prox_u(u):
+        def prox_u(u, step_size=0):
             u /= np.maximum(1., np.linalg.norm(u, axis=1))[:, None]
             return u
 
-        def prox_v(v):
+        def prox_v(v, step_size=0):
             if window:
                 v *= tukey_window_
             v /= np.maximum(1., np.linalg.norm(v, axis=1))[:, None]
@@ -317,7 +318,7 @@ def update_d(X, z, D_hat0, constants=None, b_hat_0=None, debug=False,
                 grad *= tukey_window_
             return grad
 
-        def prox(D):
+        def prox(D, step_size=0):
             if window:
                 D *= tukey_window_
             D = prox_d(D)

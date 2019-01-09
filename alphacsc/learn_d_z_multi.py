@@ -376,6 +376,7 @@ def _online_learn(X, D_hat, z_hat, compute_z_func, compute_d_func,
                   name="online", uv_constraint='separate', window=False):
 
     reg_ = reg
+    rng = check_random_state(random_state)
 
     # Initialize constants dictionary
     constants = {}
@@ -413,7 +414,7 @@ def _online_learn(X, D_hat, z_hat, compute_z_func, compute_d_func,
         # Compute z update
         start = time.time()
         if batch_selection == 'random':
-            i0 = np.random.choice(n_trials, batch_size, replace=False)
+            i0 = rng.choice(n_trials, batch_size, replace=False)
         elif batch_selection == 'cyclic':
             i_slice = (ii * batch_size) % n_trials
             i0 = slice(i_slice, i_slice + batch_size)

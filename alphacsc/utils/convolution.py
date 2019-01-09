@@ -10,7 +10,7 @@ import numba
 import numpy as np
 
 from .. import cython_code
-from .lil import get_z_shape, is_lil
+from .lil import get_z_shape, is_lil, is_list_of_lil
 
 
 def construct_X(z, ds):
@@ -72,13 +72,17 @@ def construct_X_multi(z, D=None, n_channels=None):
 
 def _sparse_convolve(z_i, ds):
     """Same as _dense_convolve, but use the sparsity of zi."""
-    n_atoms, n_times_atom = ds.shape
-    n_atoms, n_times_valid = z_i.shape
-    n_times = n_times_valid + n_times_atom - 1
-    Xi = np.zeros(n_times)
+    n_atoms, *atom_shape = ds.shape
+    n_atoms, *valid_shape = z_i.shape
+    Xi_shape = tuple([
+        size_valid_ax + size_atom_ax - 1
+        for size_valid_ax, size_atom_ax in zip(valid_shape, atom_shape)])
+    Xi = np.zeros(Xi_shape)
     for zik, dk in zip(z_i, ds):
-        for nnz in np.where(zik != 0)[0]:
-            Xi[nnz:nnz + n_times_atom] += zik[nnz] * dk
+        for nnz in zip(*zik.nonzero()):
+            X_slice = tuple([slice(v, v + size_atom_ax)
+                             for v, size_atom_ax in zip(nnz, atom_shape)])
+            Xi[X_slice] += zik[nnz] * dk
     return Xi
 
 
@@ -265,3 +269,57 @@ def sort_atoms_by_explained_variances(D_hat, z_hat, n_channels):
     z_hat = z_hat[:, order, :]
     D_hat = D_hat[order, ...]
     return D_hat, z_hat
+
+
+def dense_transpose_convolve_z(residual, z):
+    """Convolve residual[i] with the transpose for each atom k, and return the sum
+
+    Parameters
+    ----------
+    residual : array, shape (n_trials, n_channels, n_times)
+    z : array, shape (n_trials, n_atoms, n_times_valid)
+
+    Return
+    ------
+    grad_D : array, shape (n_atoms, n_channels, n_times_atom)
+
+    """
+    if is_list_of_lil(z):
+        raise NotImplementedError()
+
+    return np.sum([[[np.correlate(res_ip, z_ik, mode='valid')    # n_times_atom
+                     for res_ip in res_i]                        # n_channels
+                    for z_ik in z_i]                             # n_atoms
+                   for z_i, res_i in zip(z, residual)], axis=0)  # n_trials
+
+
+def dense_transpose_convolve_d(residual_i, D=None, n_channels=None):
+    """Convolve residual[i] with the transpose for each atom k
+
+    Parameters
+    ----------
+    residual_i : array, shape (n_channels, n_times)
+    D : array, shape (n_atoms, n_channels, n_times_atom) or
+               shape (n_atoms, n_channels + n_times_atom)
+
+    Return
+    ------
+    grad_zi : array, shape (n_atoms, n_times_valid)
+
+    """
+
+    if D.ndim == 2:
+        # multiply by the spatial filter u
+        uR_i = np.dot(D[:, :n_channels], residual_i)
+
+        # Now do the dot product with the transpose of D (D.T) which is
+        # the conv by the reversed filter (keeping valid mode)
+        return np.array([
+            np.correlate(uR_ik, v_k, 'valid')
+            for (uR_ik, v_k) in zip(uR_i, D[:, n_channels:])
+        ])
+    else:
+        return np.sum([[
+            np.correlate(res_ip, d_kp, mode='valid')   # n_times_valid
+            for res_ip, d_kp in zip(residual_i, d_k)]  # n_channels
+            for d_k in D], axis=1)                     # n_atoms

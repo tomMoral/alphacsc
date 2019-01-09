@@ -6,6 +6,7 @@ from scipy.optimize import approx_fprime
 
 from alphacsc.utils import get_D
 from alphacsc.utils import construct_X_multi
+from alphacsc.utils import check_random_state
 from alphacsc.utils.whitening import whitening
 from alphacsc.loss_and_gradient import gradient_d
 from alphacsc.loss_and_gradient import gradient_zi
@@ -38,7 +39,7 @@ def gradient_checker(func, grad, shape, args=(), kwargs={}, n_checks=10,
     """Check that the gradient correctly approximate the finite difference
     """
 
-    rng = np.random.RandomState(random_seed)
+    rng = check_random_state(random_seed)
 
     msg = ("Computed {} did not match gradient computed with finite "
            "difference. Relative error is {{}}".format(grad_name))
@@ -78,14 +79,16 @@ def test_consistency(loss, func):
     n_trials, n_channels, n_times = 5, 3, 100
     n_atoms, n_times_atom = 10, 15
 
+    rng = check_random_state(27)
+
     loss_params = dict(gamma=.01)
 
     n_times_valid = n_times - n_times_atom + 1
 
-    X = np.random.randn(n_trials, n_channels, n_times)
-    z = np.random.randn(n_trials, n_atoms, n_times_valid)
+    z = rng.randn(n_trials, n_atoms, n_times_valid)
+    X = rng.randn(n_trials, n_channels, n_times)
 
-    uv = np.random.randn(n_atoms, n_channels + n_times_atom)
+    uv = rng.randn(n_atoms, n_channels + n_times_atom)
     D = get_D(uv, n_channels)
 
     if loss == "whitening":
@@ -103,6 +106,8 @@ def test_gradients(loss):
     n_trials, n_channels, n_times = 5, 3, 100
     n_atoms, n_times_atom = 10, 15
 
+    rng = check_random_state(427)
+
     n_checks = 5
     if loss == "dtw":
         n_checks = 1
@@ -111,10 +116,10 @@ def test_gradients(loss):
 
     n_times_valid = n_times - n_times_atom + 1
 
-    X = np.random.randn(n_trials, n_channels, n_times)
-    z = np.random.randn(n_trials, n_atoms, n_times_valid)
+    X = rng.randn(n_trials, n_channels, n_times)
+    z = rng.randn(n_trials, n_atoms, n_times_valid)
 
-    uv = np.random.randn(n_atoms, n_channels + n_times_atom)
+    uv = rng.randn(n_atoms, n_channels + n_times_atom)
     D = get_D(uv, n_channels)
     if loss == "whitening":
         loss_params['ar_model'], X = whitening(X)
