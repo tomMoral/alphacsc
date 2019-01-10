@@ -360,9 +360,10 @@ def get_max_error_dict(X, z, D, uv_constraint='separate', window=False):
         atom_support = (D.shape[1] - n_channels,)
     else:
         atom_support = D.shape[2:]
+    valid_shape = get_valid_shape(sig_shape, atom_support)
     patch_rec_error = _patch_reconstruction_error(X, z, D)
     i0 = patch_rec_error.argmax()
-    n0, *pt0 = np.unravel_index(i0, (n_trials, *sig_shape))
+    n0, *pt0 = np.unravel_index(i0, (n_trials, *valid_shape))
 
     d0_slice = tuple([slice(n0, n0 + 1), slice(None)] + [
         slice(v, v + size_ax) for v, size_ax in zip(pt0, atom_support)

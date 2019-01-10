@@ -126,3 +126,32 @@ def test_transformers(klass):
     ]
     for attribute in attributes:
         getattr(cdl, attribute)
+
+
+@pytest.mark.parametrize('window', [False, True])
+def test_learn_d_z_multi_2d(window):
+    n_trials, n_channels, sig_shape = 2, 3, (100, 100)
+    n_atoms, atom_support = 4, (10, 10)
+
+    rng = check_random_state(24)
+    X = rng.randn(n_trials, n_channels, *sig_shape)
+
+    solver_z_kwargs = dict(max_iter=1000)
+
+    pobj, times, D_hat, z_hat, reg = learn_d_z_multi(
+        X, n_atoms, atom_support, random_state=rng, n_iter=30, eps=-np.inf,
+        rank1=False, lmbd_max='scaled', solver_z='dicod', window=window,
+        solver_z_kwargs=solver_z_kwargs, raise_on_increase=True, verbose=10)
+
+    assert not np.any(np.isnan(D_hat))
+
+    msg = "Cost function does not go down"
+
+    try:
+        assert np.sum(np.diff(pobj) > 1e-13) == 0, msg
+    except AssertionError:
+        import matplotlib.pyplot as plt
+        plt.semilogy(pobj - np.min(pobj) + 1e-6)
+        plt.title(msg)
+        plt.show()
+        raise

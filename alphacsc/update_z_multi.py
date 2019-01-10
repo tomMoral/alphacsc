@@ -175,11 +175,7 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
                            loss=loss, loss_params=loss_params)
 
     if z0_i is None:
-        z0_i = np.zeros(n_atoms * np.prod(valid_shape))
-    elif is_lil(z0_i):
-        z0_i = z0_i
-    else:
-        z0_i = z0_i.reshape(n_atoms * np.prod(valid_shape))
+        z0_i = np.zeros(n_atoms, *valid_shape)
 
     times, pobj = None, None
     if timing:
@@ -190,6 +186,7 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
     if solver == 'l-bfgs':
         msg = "solver 'l-bfgs' can only be used with positive z"
         assert z_positive is True, msg
+        z0_i = z0_i.ravel()
         if freeze_support:
             bounds = [(0, 0) if z == 0 else (0, None) for z in z0_i]
         else:

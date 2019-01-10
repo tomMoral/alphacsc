@@ -97,7 +97,8 @@ def scale_z_by_atom(z, scale, copy=True):
     else:
         if copy:
             z = z.copy()
-        z *= scale[None, :, None]
+        scale_expension = tuple([None, slice(None)] + [None] * (z.ndim - 2))
+        z *= scale[scale_expension]
 
     return z
 

@@ -146,6 +146,7 @@ def fista(f_obj, f_grad, f_prox, step_size, x0, max_iter, verbose=0,
                 # the momentum for APGD or stop the algorithm for PDG.
                 x_hat_aux = x_hat
                 has_restarted = momentum
+                step_size = 1.
 
         else:
             x_hat_aux -= step_size * grad

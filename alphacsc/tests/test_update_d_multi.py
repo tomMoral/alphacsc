@@ -7,10 +7,9 @@ from alphacsc.utils import check_random_state
 from alphacsc.utils.whitening import whitening
 from alphacsc.loss_and_gradient import compute_objective
 from alphacsc.loss_and_gradient import gradient_d, gradient_uv
-from alphacsc.update_d_multi import update_uv, prox_uv, _get_d_update_constants
+from alphacsc.update_d_multi import update_uv, update_d
+from alphacsc.update_d_multi import prox_uv, _get_d_update_constants
 
-
-from alphacsc.utils.shape_manipulation import get_valid_shape
 
 DEBUG = False
 
@@ -206,3 +205,47 @@ def test_constants_d():
             ztz[:, :, t0 - t] += tmp
 
     assert np.allclose(ztz, constants['ztz'])
+
+@pytest.mark.parametrize("momentum", [True, False])
+def test_update_d(momentum):
+    # Generate synchronous D
+    n_trials, n_channels, sig_shape = 2, 3, (100, 100)
+    n_atoms, atom_support = 4, (10, 10)
+    valid_shape = (91, 91)
+
+    rng = check_random_state(3)
+    z = rng.normal(size=(n_trials, n_atoms, *valid_shape))
+    D0 = rng.normal(size=(n_atoms, n_channels, *atom_support))
+    D1 = rng.normal(size=(n_atoms, n_channels, *atom_support))
+
+    X = construct_X_multi(z, D=D0, n_channels=n_channels)
+    assert X.shape == (n_trials, n_channels, *sig_shape)
+
+    def objective(D):
+        X_hat = construct_X_multi(z, D=D, n_channels=n_channels)
+        return compute_objective(X, X_hat, loss='l2')
+
+    # Ensure that the known optimal point is stable
+    D = update_d(X, z, D0, max_iter=1000, verbose=0)
+    cost = objective(D)
+
+    assert np.isclose(cost, 0), "optimal point not stable"
+    assert np.allclose(D, D0), "optimal point not stable"
+
+    # Ensure that the update is going down from a random initialization
+    cost0 = objective(D1)
+    uv, pobj = update_d(X, z, D1, debug=True, max_iter=5000, verbose=10,
+                        momentum=momentum, eps=1e-10)
+    cost1 = objective(uv)
+
+    msg = "Learning is not going down"
+    try:
+        assert cost1 < cost0, msg
+        # assert np.isclose(cost1, 0, atol=1e-7)
+    except AssertionError:
+        import matplotlib.pyplot as plt
+        pobj = np.array(pobj)
+        plt.semilogy(pobj)
+        plt.title(msg)
+        plt.show()
+        raise
