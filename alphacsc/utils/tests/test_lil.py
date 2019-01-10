@@ -24,7 +24,7 @@ def test_get_z_shape():
     n_trials, n_atoms, n_times_valid = 3, 2, 10
     z = rng_test.randn(n_trials, n_atoms, n_times_valid)
     z_lil = convert_to_list_of_lil(z)
-    assert_allclose(get_z_shape(z), get_z_shape(z_lil))
+    get_z_shape(z) == get_z_shape(z_lil)
 
 
 def test_safe_sum():

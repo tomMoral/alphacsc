@@ -23,5 +23,5 @@ def test_sparse_convolve():
     z_lil = convert_to_list_of_lil(z)
 
     ztz_0 = cython_code._fast_compute_ztz(z_lil, n_times_atom)
-    ztz_1 = compute_ztz(z, n_times_atom)
+    ztz_1 = compute_ztz(z, (n_times_atom,))
     assert_allclose(ztz_0, ztz_1, atol=1e-16)

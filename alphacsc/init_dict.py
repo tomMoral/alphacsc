@@ -13,17 +13,18 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 
 from .viz.callback import COLORS
-from .utils import check_random_state
 from .other.kmc2 import custom_distances
 from .update_d_multi import prox_uv, prox_d
+from .utils import check_random_state, check_1d_convolution
 from .utils.dictionary import get_uv, get_D, _patch_reconstruction_error
 from .utils.dictionary import tukey_window
+from .utils.shape_manipulation import get_valid_shape, check_shape
 
 ried = custom_distances.roll_invariant_euclidean_distances
 tied = custom_distances.translation_invariant_euclidean_distances
 
 
-def init_dictionary(X, n_atoms, n_times_atom, uv_constraint='separate',
+def init_dictionary(X, n_atoms, atom_support, uv_constraint='separate',
                     rank1=True, window=False, D_init=None,
                     D_init_params=dict(), random_state=None):
     """Return an initial dictionary for the signals X
@@ -34,7 +35,7 @@ def init_dictionary(X, n_atoms, n_times_atom, uv_constraint='separate',
         The data on which to perform CSC.
     n_atoms : int
         The number of atoms to learn.
-    n_times_atom : int
+    atom_support : tuple of int
         The support of the atom.
     uv_constraint : str in {'joint' | 'separate'}
         The kind of norm constraint on the atoms:
@@ -48,7 +49,7 @@ def init_dictionary(X, n_atoms, n_times_atom, uv_constraint='separate',
         The initialization scheme for the dictionary or the initial
         atoms. The shape should match the required dictionary shape, ie if
         rank1 is TRue, (n_atoms, n_channels + n_times_atom) and else
-        (n_atoms, n_channels, n_times_atom)
+        (n_atoms, n_channels, *atom_support)
     D_init_params : dict
         Dictionnary of parameters for the kmeans init method.
     random_state : int | None
@@ -57,15 +58,19 @@ def init_dictionary(X, n_atoms, n_times_atom, uv_constraint='separate',
     Return
     ------
     D : array shape (n_atoms, n_channels + n_times_atom) or
-              shape (n_atoms, n_channels, n_times_atom)
+              shape (n_atoms, n_channels, *atoms_shape)
         The initial atoms to learn from the data.
     """
-    n_trials, n_channels, n_times = X.shape
+    n_trials, n_channels, *sig_shape = X.shape
+    atom_support = check_shape(atom_support)
+    valid_shape = get_valid_shape(sig_shape, atom_support)
+
     rng = check_random_state(random_state)
 
-    D_shape = (n_atoms, n_channels, n_times_atom)
+    D_shape = (n_atoms, n_channels,) + atom_support
     if rank1:
-        D_shape = (n_atoms, n_channels + n_times_atom)
+        check_1d_convolution(atom_support)
+        D_shape = (n_atoms, n_channels + atom_support[0])
 
     if isinstance(D_init, np.ndarray):
         D_hat = D_init.copy()
@@ -75,23 +80,28 @@ def init_dictionary(X, n_atoms, n_times_atom, uv_constraint='separate',
         D_hat = rng.randn(*D_shape)
 
     elif D_init == 'chunk':
-        D_hat = np.zeros((n_atoms, n_channels, n_times_atom))
+        D_hat = np.zeros((n_atoms, n_channels, *atom_support))
         for i_atom in range(n_atoms):
             i_trial = rng.randint(n_trials)
-            t0 = rng.randint(n_times - n_times_atom)
-            D_hat[i_atom] = X[i_trial, :, t0:t0 + n_times_atom]
+            pt = [rng.randint(size_valid_ax) for size_valid_ax in valid_shape]
+            chunk_slice = tuple([i_trial, Ellipsis] + [
+                slice(v, v + size_atom_ax)
+                for v, size_atom_ax in zip(pt, atom_support)])
+            D_hat[i_atom] = X[chunk_slice]
         if rank1:
             D_hat = get_uv(D_hat)
 
     elif D_init == "kmeans":
-        D_hat = kmeans_init(X, n_atoms, n_times_atom, random_state=rng,
+        check_1d_convolution(atom_support)
+        D_hat = kmeans_init(X, n_atoms, atom_support[0], random_state=rng,
                             **D_init_params)
         if not rank1:
             D_hat = get_D(D_hat, n_channels)
 
     elif D_init == "ssa":
+        check_1d_convolution(atom_support)
         u_hat = rng.randn(n_atoms, n_channels)
-        v_hat = ssa_init(X, n_atoms, n_times_atom, random_state=rng)
+        v_hat = ssa_init(X, n_atoms, atom_support[0], random_state=rng)
         D_hat = np.c_[u_hat, v_hat]
         if not rank1:
             D_hat = get_D(D_hat, n_channels)
@@ -105,9 +115,9 @@ def init_dictionary(X, n_atoms, n_times_atom, uv_constraint='separate',
 
     if window and not isinstance(D_init, np.ndarray):
         if rank1:
-            D_hat[:, n_channels:] *= tukey_window(n_times_atom)[None, :]
+            D_hat[:, n_channels:] *= tukey_window(atom_support)[None]
         else:
-            D_hat = D_hat * tukey_window(n_times_atom)[None, None, :]
+            D_hat *= tukey_window(atom_support)[None, None]
 
     if rank1:
         D_hat = prox_uv(D_hat, uv_constraint=uv_constraint,
@@ -345,19 +355,22 @@ def get_max_error_dict(X, z, D, uv_constraint='separate', window=False):
     [Yellin2017] BLOOD CELL DETECTION AND COUNTING IN HOLOGRAPHIC LENS-FREE
     IMAGING BY CONVOLUTIONAL SPARSE DICTIONARY LEARNING AND CODING.
     """
-    n_trials, n_channels, n_times = X.shape
+    n_trials, n_channels, *sig_shape = X.shape
     if D.ndim == 2:
-        n_times_atom = D.shape[1] - n_channels
+        atom_support = (D.shape[1] - n_channels,)
     else:
-        n_times_atom = D.shape[2]
+        atom_support = D.shape[2:]
     patch_rec_error = _patch_reconstruction_error(X, z, D)
     i0 = patch_rec_error.argmax()
-    n0, t0 = np.unravel_index(i0, (n_trials, n_times))
+    n0, *pt0 = np.unravel_index(i0, (n_trials, *sig_shape))
 
-    d0 = X[n0, :, t0:t0 + n_times_atom][None]
+    d0_slice = tuple([slice(n0, n0 + 1), slice(None)] + [
+        slice(v, v + size_ax) for v, size_ax in zip(pt0, atom_support)
+    ])
+    d0 = X[d0_slice]
 
     if window:
-        d0 = d0 * tukey_window(n_times_atom)[None, :]
+        d0 = d0 * tukey_window(atom_support)[None, None]
 
     if D.ndim == 2:
         return get_uv(d0)

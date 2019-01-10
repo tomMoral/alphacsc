@@ -16,36 +16,52 @@ from .utils.dictionary import tukey_window
 from .loss_and_gradient import compute_objective, compute_X_and_objective_multi
 from .loss_and_gradient import gradient_uv, gradient_d
 
+from .utils.shape_manipulation import get_valid_shape
+
+
+def safe_divide(a, b, inplace=True):
+    if inplace:
+        a /= b # + np.isclose(b, 0)
+        return a
+    else:
+        return a / (b + np.isclose(b, 0))
+
 
 def prox_uv(uv, step_size=0, uv_constraint='joint', n_channels=None,
             return_norm=False):
     if uv_constraint == 'joint':
-        norm_uv = np.maximum(1, np.linalg.norm(uv, axis=1))
-        uv /= norm_uv[:, None]
+        norm_uv = np.maximum(1, np.linalg.norm(uv, axis=1, keepdims=True))
+        uv /= norm_uv
 
     elif uv_constraint == 'separate':
         assert n_channels is not None
-        norm_u = np.maximum(1, np.linalg.norm(uv[:, :n_channels], axis=1))
-        norm_v = np.maximum(1, np.linalg.norm(uv[:, n_channels:], axis=1))
+        norm_u = np.maximum(1, np.linalg.norm(uv[:, :n_channels], axis=1,
+                                              keepdims=True))
+        norm_v = np.maximum(1, np.linalg.norm(uv[:, n_channels:], axis=1,
+                                              keepdims=True))
 
-        uv[:, :n_channels] /= norm_u[:, None]
-        uv[:, n_channels:] /= norm_v[:, None]
+        uv[:, :n_channels] /= norm_u
+        uv[:, n_channels:] /= norm_v
         norm_uv = norm_u * norm_v
     else:
         raise ValueError('Unknown uv_constraint: %s.' % (uv_constraint, ))
 
     if return_norm:
-        return uv, norm_uv
+        return uv, norm_uv.squeeze()
     else:
         return uv
 
 
 def prox_d(D, step_size=0, return_norm=False):
-    norm_d = np.maximum(1, np.linalg.norm(D, axis=(1, 2)))
-    D /= norm_d[:, None, None]
+    sum_axis = tuple(range(1, D.ndim))
+    if D.ndim == 3:
+        norm_d = np.maximum(1, np.linalg.norm(D, axis=sum_axis, keepdims=True))
+    else:
+        norm_d = np.sqrt(np.sum(D * D, axis=sum_axis, keepdims=True))
+    D /= norm_d
 
     if return_norm:
-        return D, norm_d
+        return D, norm_d.squeeze()
     else:
         return D
 
@@ -90,7 +106,7 @@ def update_uv(X, z, uv_hat0, constants=None, b_hat_0=None, debug=False,
     verbose : int
         Verbosity level.
     window : boolean
-        If True, reparametrize the atoms with a temporal Tukey window.
+        If True, re-parametrize the atoms with a temporal Tukey window.
 
     Returns
     -------
@@ -99,12 +115,12 @@ def update_uv(X, z, uv_hat0, constants=None, b_hat_0=None, debug=False,
     """
     n_trials, n_atoms, n_times_valid = get_z_shape(z)
     _, n_channels, n_times = X.shape
-    n_times_atom = uv_hat0.shape[1] - n_channels
+    atom_support = (uv_hat0.shape[1] - n_channels,)
 
     if window:
-        tukey_window_ = tukey_window(n_times_atom)[None, :]
+        tukey_window_ = tukey_window(atom_support)[None]
         uv_hat0 = uv_hat0.copy()
-        uv_hat0[:, n_channels:] /= tukey_window_
+        safe_divide(uv_hat0[:, n_channels:], tukey_window_)
 
     if solver_d == 'alternate':
         msg = "alternate solver should be used with separate constraints"
@@ -143,7 +159,7 @@ def update_uv(X, z, uv_hat0, constants=None, b_hat_0=None, debug=False,
             uv = prox_uv(uv, uv_constraint=uv_constraint,
                          n_channels=n_channels)
             if window:
-                uv[:, n_channels:] /= tukey_window_
+                safe_divide(uv[:, n_channels:], tukey_window_)
             return uv
 
         uv_hat, pobj = fista(objective, grad, prox, None, uv_hat0, max_iter,
@@ -160,15 +176,15 @@ def update_uv(X, z, uv_hat0, constants=None, b_hat_0=None, debug=False,
         u_hat, v_hat = uv_hat[:, :n_channels], uv_hat[:, n_channels:]
 
         def prox_u(u, step_size=0):
-            u /= np.maximum(1., np.linalg.norm(u, axis=1))[:, None]
+            u /= np.maximum(1., np.linalg.norm(u, axis=1, keepdims=True))
             return u
 
         def prox_v(v, step_size=0):
             if window:
                 v *= tukey_window_
-            v /= np.maximum(1., np.linalg.norm(v, axis=1))[:, None]
+            v /= np.maximum(1., np.linalg.norm(v, axis=1, keepdims=True))
             if window:
-                v /= tukey_window_
+                v = safe_divide(v, tukey_window_)
             return v
 
         pobj = []
@@ -253,18 +269,18 @@ def update_d(X, z, D_hat0, constants=None, b_hat_0=None, debug=False,
 
     Parameters
     ----------
-    X : array, shape (n_trials, n_channels, n_times)
+    X : array, shape (n_trials, n_channels, *sig_shape)
         The data for sparse coding
-    z : array, shape (n_trials, n_atoms, n_times - n_times_atom + 1)
+    z : array, shape (n_trials, n_atoms, *valid_shape)
         Can also be a list of n_trials LIL-sparse matrix of shape
             (n_atoms, n_times - n_times_atom + 1)
         The code for which to learn the atoms
-    D_hat0 : array, shape (n_atoms, n_channels, n_times_atom)
+    D_hat0 : array, shape (n_atoms, n_channels, *atom_support)
         The initial atoms.
     constants : dict or None
         Dictionary of constants to accelerate the computation of the gradients.
         It should only be given for loss='l2' and should contain ztz and ztX.
-    b_hat_0 : array, shape (n_atoms * (n_channels + n_times_atom))
+    b_hat_0 : array, shape (n_atoms, n_channels, *atom_support)
         Init eigen-vector vector used in power_iteration, used in warm start.
     debug : bool
         If True, return the cost at each iteration.
@@ -287,20 +303,20 @@ def update_d(X, z, D_hat0, constants=None, b_hat_0=None, debug=False,
     D_hat : array, shape (n_atoms, n_channels, n_times_atom)
         The atoms to learn from the data.
     """
-    n_trials, n_atoms, n_times_valid = get_z_shape(z)
-    _, n_channels, n_times = X.shape
-    n_atoms, n_channels, n_times_atom = D_hat0.shape
+    n_trials, n_atoms, *valid_shape = get_z_shape(z)
+    _, n_channels, *sig_shape = X.shape
+    n_atoms, n_channels, *atom_support = D_hat0.shape
 
     if window:
-        tukey_window_ = tukey_window(n_times_atom)[None, None, :]
-        D_hat0 = D_hat0 / tukey_window_
+        tukey_window_ = tukey_window(atom_support)[None, None]
+        D_hat0 = safe_divide(D_hat0, tukey_window_, inplace=False)
 
     if loss == 'l2' and constants is None:
         constants = _get_d_update_constants(X, z)
 
     def objective(D, full=False):
         if window:
-            D = D * tukey_window_
+            D = D * tukey_window_ + (tukey_window_ == 0)
         if loss == 'l2':
             return compute_objective(D=D, constants=constants)
         return compute_X_and_objective_multi(X, z, D_hat=D, loss=loss,
@@ -323,7 +339,7 @@ def update_d(X, z, D_hat0, constants=None, b_hat_0=None, debug=False,
                 D *= tukey_window_
             D = prox_d(D)
             if window:
-                D /= tukey_window_
+                D = safe_divide(D, tukey_window_)
             return D
 
         D_hat, pobj = fista(objective, grad, prox, None, D_hat0, max_iter,
@@ -343,17 +359,17 @@ def update_d(X, z, D_hat0, constants=None, b_hat_0=None, debug=False,
 
 
 def _get_d_update_constants(X, z):
-    n_trials, n_atoms, n_times_valid = get_z_shape(z)
-    n_trials, n_channels, n_times = X.shape
-    n_times_atom = n_times - n_times_valid + 1
+    n_trials, n_atoms, *valid_shape = get_z_shape(z)
+    n_trials, n_channels, *sig_shape = X.shape
+    atom_support = get_valid_shape(sig_shape, valid_shape)
 
     if is_list_of_lil(z):
         cython_code._assert_cython()
         ztX = cython_code._fast_compute_ztX(z, X)
-        ztz = cython_code._fast_compute_ztz(z, n_times_atom)
+        ztz = cython_code._fast_compute_ztz(z, atom_support[0])
     else:
         ztX = compute_ztX(z, X)
-        ztz = compute_ztz(z, n_times_atom)
+        ztz = compute_ztz(z, atom_support)
 
     constants = {}
     constants['ztX'] = ztX

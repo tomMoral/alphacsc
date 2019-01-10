@@ -13,7 +13,10 @@ from alphacsc.loss_and_gradient import compute_X_and_objective_multi
 from alphacsc.utils.compute_constants import compute_ztz, compute_ztX
 
 
-@pytest.mark.parametrize('loss', ['l2', 'dtw', 'whitening'])
+LOSSES = ['l2']  # , 'dtw', 'whitening']
+
+
+@pytest.mark.parametrize('loss', LOSSES)
 @pytest.mark.parametrize('solver', ['l-bfgs', 'ista', 'fista'])
 def test_update_z_multi_decrease_cost_function(loss, solver):
     n_trials, n_channels, n_times = 2, 3, 100
@@ -44,7 +47,7 @@ def test_update_z_multi_decrease_cost_function(loss, solver):
     assert loss_1 < loss_0
 
     if loss == 'l2':
-        assert np.allclose(ztz, compute_ztz(z_hat, n_times_atom))
+        assert np.allclose(ztz, compute_ztz(z_hat, (n_times_atom,)))
         assert np.allclose(ztX, compute_ztX(z_hat, X))
 
 
@@ -138,7 +141,7 @@ def test_cd(use_sparse_lil):
         assert np.allclose(ztX, _fast_compute_ztX(z_hat, X))
 
     else:
-        assert np.allclose(ztz, compute_ztz(z_hat, n_times_atom))
+        assert np.allclose(ztz, compute_ztz(z_hat, (n_times_atom,)))
         assert np.allclose(ztX, compute_ztX(z_hat, X))
 
     loss_1 = compute_X_and_objective_multi(X=X, z_hat=z_hat, D_hat=uv,
@@ -157,3 +160,30 @@ def test_cd(use_sparse_lil):
         plt.plot(pobj)
         plt.show()
         raise
+
+
+def test_update_z_multi_2d():
+    n_trials, n_channels, sig_shape = 2, 3, (100, 100)
+    n_atoms, atom_support = 4, (10, 10)
+    valid_shape = (91, 91)
+    reg = 0
+
+    solver_kwargs = dict()
+
+    rng = check_random_state(0)
+    X = rng.randn(n_trials, n_channels, *sig_shape)
+    D = rng.randn(n_atoms, n_channels, *atom_support)
+    z = rng.randn(n_trials, n_atoms, *valid_shape)
+
+    loss_0 = compute_X_and_objective_multi(X=X, z_hat=z, D_hat=D, reg=reg,
+                                           feasible_evaluation=False,
+                                           loss='l2')
+
+    z_hat, ztz, ztX = update_z_multi(X, D, reg, z0=z, solver="dicod",
+                                     loss='l2', return_ztz=True,
+                                     solver_kwargs=solver_kwargs)
+
+    loss_1 = compute_X_and_objective_multi(X=X, z_hat=z_hat, D_hat=D,
+                                           reg=reg, feasible_evaluation=False,
+                                           loss='l2')
+    assert loss_1 < loss_0

@@ -11,6 +11,7 @@ from .utils.whitening import apply_whitening
 from .utils.convolution import numpy_convolve_uv
 from .utils.convolution import tensordot_convolve
 from .utils.convolution import _choose_convolve_multi
+from .utils.shape_manipulation import get_valid_shape
 from .utils.convolution import dense_transpose_convolve_z
 from .utils.convolution import dense_transpose_convolve_d
 from .utils.lil import scale_z_by_atom, safe_sum, get_z_shape, is_list_of_lil
@@ -238,9 +239,14 @@ def gradient_uv(uv, X=None, z=None, constants=None, reg=None, loss='l2',
 
 def gradient_zi(Xi, zi, D=None, constants=None, reg=None, loss='l2',
                 loss_params=dict(), return_func=False, flatten=False):
-    n_atoms = D.shape[0]
+    n_channels, *sig_shape = Xi.shape
+    n_atoms, n_channels_D, *atom_support = D.shape
+    if D.ndim == 2:
+        # D is rank 1
+        atom_support = (n_channels_D - n_channels,)
+    valid_shape = get_valid_shape(sig_shape, atom_support)
     if flatten:
-        zi = zi.reshape((n_atoms, -1))
+        zi = zi.reshape((n_atoms, *valid_shape))
 
     if loss == 'l2':
         cost, grad = _l2_gradient_zi(Xi, zi, D=D, return_func=return_func)
@@ -309,12 +315,14 @@ def gradient_d(D=None, X=None, z=None, constants=None, reg=None,
     """
     if flatten:
         if z is None:
-            n_atoms = constants['ztz'].shape[0]
             n_channels = constants['n_channels']
+            n_atoms, _, ztz_support = constants['ztz'].shape
+            atom_support = tuple((np.array(ztz_support) + 1) // 2)
         else:
-            n_atoms = get_z_shape(z)[1]
-            n_channels = X.shape[1]
-        D = D.reshape((n_atoms, n_channels, -1))
+            n_trial, n_channels, *sig_shape = X.shape
+            n_trials, n_atoms, *valid_shape = get_z_shape(z)
+            atom_support = get_valid_shape(sig_shape, valid_shape)
+        D = D.reshape((n_atoms, n_channels, *atom_support))
 
     if is_list_of_lil(z) and loss != 'l2':
         raise NotImplementedError()
@@ -423,9 +431,18 @@ def _l2_objective(X=None, X_hat=None, D=None, constants=None):
     if constants:
         # Fast compute the l2 objective when updating uv/D
         assert D is not None, "D is needed to fast compute the objective."
-        grad_d = .5 * _l2_gradient_d(D, constants=constants)[1]
-        grad_d -= constants['ztX']
-        cost = grad_D_dot_D(grad_d, D, constants=constants)
+        if D.ndim == 2:
+            # rank 1 dictionary, use uv computation
+            n_channels = constants['n_channels']
+            grad_d = .5 * numpy_convolve_uv(constants['ztz'], D)
+            grad_d -= constants['ztX']
+            cost = (grad_d * D[:, None, n_channels:]).sum(axis=2)
+            cost = np.dot(cost.ravel(), D[:, :n_channels].ravel())
+        else:
+            grad_d = .5 * tensordot_convolve(constants['ztz'], D)
+            grad_d -= constants['ztX']
+            cost = (D * grad_d).sum()
+
         cost += .5 * constants['XtX']
         return cost
 
@@ -460,7 +477,7 @@ def _l2_gradient_zi(Xi, z_i, D=None, return_func=False):
 
     Parameters
     ----------
-    Xi : array, shape (n_channels, n_times)
+    Xi : array, shape (n_channels, *sig_shape)
         The data array for one trial
     z_i : array, shape (n_atoms, n_times_valid)
         The activations
@@ -478,7 +495,7 @@ def _l2_gradient_zi(Xi, z_i, D=None, return_func=False):
     grad : array, shape (n_atoms, n_times_valid)
         The gradient
     """
-    n_channels, _ = Xi.shape
+    n_channels, *_ = Xi.shape
 
     Dz_i = _choose_convolve_multi(z_i, D=D, n_channels=n_channels)
 

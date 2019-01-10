@@ -12,6 +12,8 @@ import numpy as np
 
 from .utils import lil
 from .utils import check_random_state
+from .utils import check_1d_convolution
+from .utils.shape_manipulation import get_valid_shape, check_shape
 from .utils.convolution import sort_atoms_by_explained_variances
 from .utils.dictionary import get_lambda_max
 from .utils.whitening import whitening
@@ -21,7 +23,7 @@ from .update_z_multi import update_z_multi
 from .update_d_multi import update_uv, update_d
 
 
-def learn_d_z_multi(X, n_atoms, n_times_atom, n_iter=60, n_jobs=1,
+def learn_d_z_multi(X, n_atoms, atom_support, n_iter=60, n_jobs=1,
                     lmbd_max='fixed', reg=0.1, loss='l2',
                     loss_params=dict(gamma=.1, sakoe_chiba_band=10, ordar=10),
                     rank1=True, uv_constraint='separate', eps=1e-10,
@@ -42,7 +44,7 @@ def learn_d_z_multi(X, n_atoms, n_times_atom, n_iter=60, n_jobs=1,
         The data on which to perform CSC.
     n_atoms : int
         The number of atoms to learn.
-    n_times_atom : int
+    atom_support : int or tuple of int
         The support of the atom.
     reg : float
         The regularization parameter
@@ -148,21 +150,24 @@ def learn_d_z_multi(X, n_atoms, n_times_atom, n_iter=60, n_jobs=1,
         "not '{}'".format(lmbd_max)
     )
 
-    n_trials, n_channels, n_times = X.shape
-    n_times_valid = n_times - n_times_atom + 1
+    n_trials, n_channels, *sig_shape = X.shape
+    atom_support = check_shape(atom_support)
+    valid_shape = get_valid_shape(sig_shape, atom_support)
+    if rank1:
+        check_1d_convolution(atom_support)
 
     # initialization
     start = time.time()
     rng = check_random_state(random_state)
 
-    D_hat = init_dictionary(X, n_atoms, n_times_atom, D_init=D_init,
+    D_hat = init_dictionary(X, n_atoms, atom_support, D_init=D_init,
                             rank1=rank1, uv_constraint=uv_constraint,
                             D_init_params=D_init_params, random_state=rng,
                             window=window)
-    b_hat_0 = rng.randn(n_atoms * (n_channels + n_times_atom))
+    b_hat_0 = rng.randn(n_atoms * (n_channels + np.prod(atom_support)))
     init_duration = time.time() - start
 
-    z_hat = lil.init_zeros(use_sparse_z, n_trials, n_atoms, n_times_valid)
+    z_hat = lil.init_zeros(use_sparse_z, n_trials, n_atoms, valid_shape)
 
     z_kwargs = dict(verbose=verbose)
     z_kwargs.update(solver_z_kwargs)
@@ -285,8 +290,8 @@ def _batch_learn(X, D_hat, z_hat, compute_z_func, compute_d_func,
         D_hat = D_hat[0:0]
         # remove all activations
         use_sparse_z = lil.is_list_of_lil(z_hat)
-        n_trials, n_atoms, n_times_valid = lil.get_z_shape(z_hat)
-        z_hat = lil.init_zeros(use_sparse_z, n_trials, 0, n_times_valid)
+        n_trials, n_atoms, *valid_shape = lil.get_z_shape(z_hat)
+        z_hat = lil.init_zeros(use_sparse_z, n_trials, 0, valid_shape)
 
         if n_iter < n_atoms:
             raise ValueError('The greedy method needs at least %d iteration '
@@ -384,12 +389,14 @@ def _online_learn(X, D_hat, z_hat, compute_z_func, compute_d_func,
     if D_hat.ndim == 2:
         n_atoms, n_times_atom = D_hat.shape
         n_times_atom -= n_channels
+        atom_support = (n_times_atom,)
     else:
-        n_atoms, _, n_times_atom = D_hat.shape
+        n_atoms, _, *atom_support = D_hat.shape
     constants['n_channels'] = n_channels
     constants['XtX'] = np.dot(X.ravel(), X.ravel())
-    constants['ztz'] = np.zeros((n_atoms, n_atoms, 2 * n_times_atom - 1))
-    constants['ztX'] = np.zeros((n_atoms, n_channels, n_times_atom))
+    ztz_support = tuple(2 * np.array(atom_support) - 1)
+    constants['ztz'] = np.zeros((n_atoms, n_atoms, *ztz_support))
+    constants['ztX'] = np.zeros((n_atoms, n_channels, *atom_support))
 
     # monitor cost function
     times = [0]

@@ -10,10 +10,14 @@ from alphacsc.loss_and_gradient import gradient_d, gradient_uv
 from alphacsc.update_d_multi import update_uv, prox_uv, _get_d_update_constants
 
 
+from alphacsc.utils.shape_manipulation import get_valid_shape
+
 DEBUG = False
 
+LOSSES = ['l2']  # , 'dtw', 'whitening']
 
-@pytest.mark.parametrize('loss', ['l2', 'dtw', 'whitening'])
+
+@pytest.mark.parametrize('loss', LOSSES)
 def test_gradient_d(loss):
     # Generate synchronous D
     n_times_atom, n_times = 10, 100
@@ -60,7 +64,7 @@ def test_gradient_d(loss):
         raise
 
 
-@pytest.mark.parametrize('loss', ['l2', 'dtw', 'whitening'])
+@pytest.mark.parametrize('loss', LOSSES)
 def test_gradient_uv(loss):
     # Generate synchronous D
     n_times_atom, n_times = 10, 100
@@ -166,33 +170,6 @@ def test_update_uv(solver_d, uv_constraint):
         plt.title(msg)
         plt.show()
         raise
-
-
-def test_fast_cost():
-    """Test that _shifted_objective_uv compute the right thing"""
-    # Generate synchronous D
-    n_times_atom, n_times = 10, 40
-    n_channels = 3
-    n_atoms = 2
-    n_trials = 4
-
-    rng = check_random_state(5)
-    X = rng.normal(size=(n_trials, n_channels, n_times))
-    z = rng.normal(size=(n_trials, n_atoms, n_times - n_times_atom + 1))
-
-    constants = _get_d_update_constants(X, z)
-
-    def objective(uv):
-        X_hat = construct_X_multi(z, D=uv, n_channels=n_channels)
-        res = X - X_hat
-        return .5 * np.sum(res * res)
-
-    for _ in range(5):
-        uv = rng.normal(size=(n_atoms, n_channels + n_times_atom))
-
-        cost_fast = compute_objective(D=uv, constants=constants)
-        cost_full = objective(uv)
-        assert np.isclose(cost_full, cost_fast)
 
 
 def test_constants_d():

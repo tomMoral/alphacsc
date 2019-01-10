@@ -13,6 +13,7 @@ from joblib import Parallel, delayed
 from . import cython_code
 from .utils.optim import fista
 from .utils import check_random_state
+from .utils import check_1d_convolution
 from .loss_and_gradient import gradient_zi
 from .utils.lil import is_list_of_lil, is_lil
 from .utils.prox_operator import soft_thresholding
@@ -36,8 +37,8 @@ def update_z_multi(X, D, reg, z0=None, solver='l-bfgs', solver_kwargs=dict(),
         the spatial and temporal atoms uv (n_atoms, n_channels + n_times_atom).
     reg : float
         The regularization constant
-    z0 : None | array, shape (n_trials, n_atoms, n_times_valid) |
-         list of sparse lil_matrices, shape (n_atoms, n_times_valid)
+    z0 : None | array, shape (n_trials, n_atoms, *valid_shape) |
+         list of sparse lil_matrices, shape (n_atoms, *valid_shape)
         Init for z (can be used for warm restart).
     solver : 'l-bfgs' | "lgcd"
         The solver to use.
@@ -67,25 +68,28 @@ def update_z_multi(X, D, reg, z0=None, solver='l-bfgs', solver_kwargs=dict(),
 
     Returns
     -------
-    z : array, shape (n_trials, n_atoms, n_times - n_times_atom + 1)
+    z : array, shape (n_trials, n_atoms, *valid_shape)
         The true codes.
     """
-    n_trials, n_channels, n_times = X.shape
+    n_trials, n_channels, *sig_shape = X.shape
     if D.ndim == 2:
+        check_1d_convolution(sig_shape)
         n_atoms, n_channels_n_times_atom = D.shape
-        n_times_atom = n_channels_n_times_atom - n_channels
+        atom_support = (n_channels_n_times_atom - n_channels,)
     else:
-        n_atoms, n_channels, n_times_atom = D.shape
-    n_times_valid = n_times - n_times_atom + 1
-
-    if z0 is None:
-        z0 = np.zeros((n_trials, n_atoms, n_times_valid))
+        n_atoms, n_channels, *atom_support = D.shape
+    valid_shape = tuple([
+        size_ax - size_atom_ax + 1
+        for size_ax, size_atom_ax in zip(sig_shape, atom_support)])
 
     rng = check_random_state(random_state)
     parallel_seeds = [rng.randint(2**32) for _ in range(n_trials)]
 
     # now estimate the codes
     delayed_update_z = delayed(_update_z_multi_idx)
+
+    if z0 is None:
+        z0 = np.zeros((n_trials, n_atoms, *valid_shape))
 
     results = Parallel(n_jobs=n_jobs)(
         delayed_update_z(X[i], D, reg, z0[i], debug, solver, solver_kwargs,
@@ -97,8 +101,10 @@ def update_z_multi(X, D, reg, z0=None, solver='l-bfgs', solver_kwargs=dict(),
     # Post process the results to get separate objects
     z_hats, pobj, times = [], [], []
     if loss == 'l2' and return_ztz:
-        ztz = np.zeros((n_atoms, n_atoms, 2 * n_times_atom - 1))
-        ztX = np.zeros((n_atoms, n_channels, n_times_atom))
+        ztz_shape = tuple([2 * size_atom_ax - 1
+                           for size_atom_ax in atom_support])
+        ztz = np.zeros((n_atoms, n_atoms, *ztz_shape))
+        ztX = np.zeros((n_atoms, n_channels, *atom_support))
     else:
         ztz, ztX = None, None
     for z_hat, ztz_i, ztX_i, pobj_i, times_i in results:
@@ -109,7 +115,7 @@ def update_z_multi(X, D, reg, z0=None, solver='l-bfgs', solver_kwargs=dict(),
 
     # If z_hat is a ndarray, stack and reorder the columns
     if not is_list_of_lil(z0):
-        z_hats = np.array(z_hats).reshape(n_trials, n_atoms, n_times_valid)
+        z_hats = np.array(z_hats).reshape(n_trials, n_atoms, *valid_shape)
 
     return z_hats, ztz, ztX
 
@@ -137,15 +143,21 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
                         loss_params=dict(), z_positive=True, return_ztz=False,
                         timing=False, random_state=None):
     t_start = time.time()
-    n_channels, n_times = X_i.shape
+    n_channels, *sig_shape = X_i.shape
     if D.ndim == 2:
+        check_1d_convolution(sig_shape)
         n_atoms, n_channels_n_times_atom = D.shape
-        n_times_atom = n_channels_n_times_atom - n_channels
+        atom_support = (n_channels_n_times_atom - n_channels,)
     else:
-        n_atoms, n_channels, n_times_atom = D.shape
-    n_times_valid = n_times - n_times_atom + 1
+        n_atoms, n_channels, *atom_support = D.shape
+
+    valid_shape = tuple([
+        size_ax - size_atom_ax + 1
+        for size_ax, size_atom_ax in zip(sig_shape, atom_support)])
 
     assert not (freeze_support and z0_i is None), 'Impossible !'
+    if freeze_support and solver == "dicod":
+        solver = "lgcd"
 
     if is_lil(z0_i) and solver != "lgcd":
         raise NotImplementedError()
@@ -163,11 +175,11 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
                            loss=loss, loss_params=loss_params)
 
     if z0_i is None:
-        z0_i = np.zeros(n_atoms * n_times_valid)
+        z0_i = np.zeros(n_atoms * np.prod(valid_shape))
     elif is_lil(z0_i):
         z0_i = z0_i
     else:
-        z0_i = z0_i.reshape(n_atoms * n_times_valid)
+        z0_i = z0_i.reshape(n_atoms * np.prod(valid_shape))
 
     times, pobj = None, None
     if timing:
@@ -181,7 +193,7 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
         if freeze_support:
             bounds = [(0, 0) if z == 0 else (0, None) for z in z0_i]
         else:
-            bounds = BoundGenerator(n_atoms * n_times_valid)
+            bounds = BoundGenerator(n_atoms * np.prod(valid_shape))
         if timing:
             def callback(xk):
                 times.append(time.time() - t_start[0])
@@ -210,8 +222,9 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
         def grad(z_hat):
             return func_and_grad(z_hat)[1]
 
-        def prox(z_hat, alpha):
-            return soft_thresholding(z_hat, alpha * reg, positive=z_positive)
+        def prox(z_hat, step_size=0):
+            return soft_thresholding(z_hat, step_size * reg,
+                                     positive=z_positive)
 
         output = fista(objective, grad, prox, step_size=None, x0=z0_i,
                        adaptive_step_size=True, timing=timing,
@@ -224,7 +237,7 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
 
     elif solver == "lgcd":
         if not sparse.isspmatrix_lil(z0_i):
-            z0_i = z0_i.reshape(n_atoms, n_times_valid)
+            z0_i = z0_i.reshape(n_atoms, *valid_shape)
 
         # Default values
         tol = solver_kwargs.get('tol', 1e-1)
@@ -244,7 +257,7 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
 
     elif solver == "dicod":
         try:
-            from dicod_python import dicod
+            from dicod_python.dicod import dicod
         except ImportError:
             raise NotImplementedError("You need to install the dicod package "
                                       "to be able to use z_solver='dicod'.")
@@ -253,9 +266,9 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
 
         tol = solver_kwargs.get('tol', 1e-1)
         n_seg = solver_kwargs.get('n_seg', 'auto')
-        n_jobs = solver_kwargs.get('n_jobs', 16)
+        n_jobs = solver_kwargs.get('n_jobs', 1)
         hostfile = solver_kwargs.get('hostfile', '')
-        max_iter = solver_kwargs.get('max_iter', 1e15)
+        max_iter = int(solver_kwargs.get('max_iter', 1e9))
         strategy = solver_kwargs.get('strategy', 'greedy')
         z_hat, ztz, ztX, pobj = dicod(
             X_i, D, reg=reg, z0=z0_i, n_seg=n_seg, strategy=strategy,
@@ -268,16 +281,17 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
                          " 'l-bfgs', or 'lgcd'." % solver)
 
     if not is_lil(z_hat):
-        z_hat = z_hat.reshape(n_atoms, n_times_valid)
+        z_hat = z_hat.reshape(n_atoms, *valid_shape)
 
     if loss == 'l2' and return_ztz:
-        if not is_lil(z_hat):
-            ztz = compute_ztz(z_hat[None], n_times_atom)
-            ztX = compute_ztX(z_hat[None], X_i[None])
-        else:
-            cython_code._assert_cython()
-            ztz = cython_code._fast_compute_ztz([z_hat], n_times_atom)
-            ztX = cython_code._fast_compute_ztX([z_hat], X_i[None])
+        if solver != 'dicod':
+            if not is_lil(z_hat):
+                ztz = compute_ztz(z_hat[None], atom_support)
+                ztX = compute_ztX(z_hat[None], X_i[None])
+            else:
+                cython_code._assert_cython()
+                ztz = cython_code._fast_compute_ztz([z_hat], atom_support[0])
+                ztX = cython_code._fast_compute_ztX([z_hat], X_i[None])
     else:
         ztz, ztX = None, None
 

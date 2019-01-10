@@ -4,6 +4,9 @@ import numpy as np
 from scipy import sparse
 
 
+from .validation import check_1d_convolution
+
+
 def convert_to_list_of_lil(z):
     return [sparse.lil_matrix(zi) for zi in z]
 
@@ -16,9 +19,10 @@ def get_z_shape(z):
     if is_list_of_lil(z):
         n_trials = len(z)
         n_atoms, n_times_valid = z[0].shape
+        valid_shape = (n_times_valid,)
     else:
-        n_trials, n_atoms, n_times_valid = z.shape
-    return n_trials, n_atoms, n_times_valid
+        n_trials, n_atoms, *valid_shape = z.shape
+    return (n_trials, n_atoms, *valid_shape)
 
 
 def is_list_of_lil(z):
@@ -30,7 +34,7 @@ def is_lil(z):
 
 
 def add_one_atom_in_z(z):
-    n_trials, n_atoms, n_times_valid = get_z_shape(z)
+    n_trials, n_atoms, *valid_shape = get_z_shape(z)
 
     if is_list_of_lil(z):
         def add_a_zero_line(zi_lil):
@@ -40,7 +44,7 @@ def add_one_atom_in_z(z):
 
         return [add_a_zero_line(zi_lil) for zi_lil in z]
     else:
-        new_z = np.zeros((n_trials, 1, n_times_valid))
+        new_z = np.zeros((n_trials, 1, *valid_shape))
         return np.concatenate([z, new_z], axis=1)
 
 
@@ -55,14 +59,15 @@ def get_nnz_and_size(z_hat):
     return z_nnz, z_size
 
 
-def init_zeros(use_sparse_z, n_trials, n_atoms, n_times_valid):
+def init_zeros(use_sparse_z, n_trials, n_atoms, atom_support):
     if use_sparse_z:
         from ..cython_code import _assert_cython
         _assert_cython()
-        z_hat = [sparse.lil_matrix((n_atoms, n_times_valid))
+        check_1d_convolution(atom_support)
+        z_hat = [sparse.lil_matrix((n_atoms, atom_support[0]))
                  for _ in range(n_trials)]
     else:
-        z_hat = np.zeros((n_trials, n_atoms, n_times_valid))
+        z_hat = np.zeros((n_trials, n_atoms, *atom_support))
 
     return z_hat
 
@@ -79,7 +84,7 @@ def scale_z_by_atom(z, scale, copy=True):
         The scales to apply on z.
     """
     if is_list_of_lil(z):
-        n_trials, n_atoms, n_times_valid = get_z_shape(z)
+        n_trials, n_atoms, *_ = get_z_shape(z)
         assert n_atoms == len(scale)
 
         if copy:
@@ -98,7 +103,7 @@ def scale_z_by_atom(z, scale, copy=True):
 
 
 def safe_sum(z, axis=None):
-    n_trials, n_atoms, n_times_valid = get_z_shape(z)
+    n_trials, n_atoms, *_ = get_z_shape(z)
     if is_list_of_lil(z):
         # n_trials = len(z) and (n_atoms, n_times_valid) = z[0].shape
         if axis is None:

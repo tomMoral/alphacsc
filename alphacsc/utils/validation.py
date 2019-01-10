@@ -8,6 +8,10 @@ def check_consistent_shape(*args):
                              '(%s != %s)' % (array.shape, args[0].shape))
 
 
+def check_1d_convolution(atom_shape):
+    assert len(atom_shape) == 1, "Not implemented for 2D convolution"
+
+
 def check_random_state(seed):
     """Turn seed into a np.random.RandomState instance.
 

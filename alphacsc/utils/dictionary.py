@@ -93,8 +93,13 @@ def get_lambda_max(X, D_hat, sample_weights=None):
         ] for D_k in D_hat], axis=(1, 2))[:, None]
 
 
-def tukey_window(n_times_atom):
-    window = signal.tukey(n_times_atom)
-    window[0] = 1e-9
-    window[-1] = 1e-9
+def tukey_window(atom_support):
+    """Apply tukey window in all dimension for D_hat"""
+    n_dimension_conv = len(atom_support)
+    window = np.ones(atom_support)
+    for i in range(n_dimension_conv):
+        slice_ax = [None] * n_dimension_conv
+        slice_ax[i] = slice(None)
+        slice_ax = tuple(slice_ax)
+        window *= signal.tukey(atom_support[i])[slice_ax]
     return window

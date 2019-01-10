@@ -1,6 +1,8 @@
 import numba
 import numpy as np
 
+from .shape_manipulation import get_valid_shape
+
 
 def compute_DtD(D, n_channels=None):
     """Compute the DtD matrix
@@ -56,8 +58,31 @@ def _compute_DtD_D(D):  # pragma: no cover
     return DtD
 
 
-@numba.jit((numba.float64[:, :, :], numba.int64), nopython=True, cache=True)
-def compute_ztz(z, n_times_atom):  # pragma: no cover
+def compute_ztz(z, atom_support):
+    if z.ndim == 3:
+        return _compute_ztz_numba(z, atom_support[0])
+
+    n_trials, n_atoms, *valid_shape = z.shape
+    ztz_support = tuple(2 * np.array(atom_support) - 1)
+    ztz_shape = (n_atoms, n_atoms) + ztz_support
+
+    padding_shape = [(size_atom_ax - 1, size_atom_ax - 1)
+                     for size_atom_ax in atom_support]
+
+    padding_shape = np.asarray([(0, 0), (0, 0)] + padding_shape, dtype='i')
+    z_pad = np.pad(z, padding_shape, mode='constant')
+    ztz = np.empty(ztz_shape)
+    for i in range(ztz.size):
+        i0 = k0, k1, *pt = np.unravel_index(i, ztz.shape)
+        zk1_slice = tuple([slice(None), k1] + [
+            slice(v, v + size_ax) for v, size_ax in zip(pt, valid_shape)])
+        ztz[i0] = np.dot(z[:, k0].ravel(), z_pad[zk1_slice].ravel())
+    return ztz
+
+
+@numba.jit((numba.float64[:, :, :], numba.int64), nopython=True,
+           cache=True)
+def _compute_ztz_numba(z, n_times_atom):  # pragma: no cover
     """
     ztz.shape = n_atoms, n_atoms, 2 * n_times_atom - 1
     z.shape = n_trials, n_atoms, n_times - n_times_atom + 1)
@@ -87,12 +112,16 @@ def compute_ztX(z, X):
     X.shape = n_trials, n_channels, n_times
     ztX.shape = n_atoms, n_channels, n_times_atom
     """
-    n_trials, n_atoms, n_times_valid = z.shape
-    _, n_channels, n_times = X.shape
-    n_times_atom = n_times - n_times_valid + 1
+    n_trials, n_atoms, *valid_shape = z.shape
+    _, n_channels, *sig_shape = X.shape
+    atom_shape = get_valid_shape(sig_shape, valid_shape)
 
-    ztX = np.zeros((n_atoms, n_channels, n_times_atom))
-    for n, k, t in zip(*z.nonzero()):
-        ztX[k, :, :] += z[n, k, t] * X[n, :, t:t + n_times_atom]
+    ztX = np.zeros((n_atoms, n_channels, *atom_shape))
+    for pt in zip(*z.nonzero()):
+        n, k, *pt = pt
+        patch_slice = tuple([n, slice(None)] + [
+            slice(v, v+size_ax) for v, size_ax in zip(pt, atom_shape)
+        ])
+        ztX[k, :, :] += z[(n, k , *pt)] * X[patch_slice]
 
     return ztX

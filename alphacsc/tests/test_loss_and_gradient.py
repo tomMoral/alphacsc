@@ -10,6 +10,7 @@ from alphacsc.utils import check_random_state
 from alphacsc.utils.whitening import whitening
 from alphacsc.loss_and_gradient import gradient_d
 from alphacsc.loss_and_gradient import gradient_zi
+from alphacsc.utils.shape_manipulation import get_valid_shape
 from alphacsc.loss_and_gradient import compute_X_and_objective_multi
 
 
@@ -154,3 +155,53 @@ def test_gradients(loss):
     gradient_checker(pobj, grad, n_atoms * n_times_valid, n_checks=n_checks,
                      debug=True, grad_name="gradient z for loss '{}'"
                      .format(loss), rtol=1e-4)
+
+
+def test_gradients_2d():
+    """Check that the gradients have the correct shape.
+    """
+    n_checks = 5
+
+    n_trials, n_channels, sig_shape = 4, 2, (12, 12)
+    n_atoms, atom_support = 3, (3, 3)
+    valid_shape = get_valid_shape(sig_shape, atom_support)
+
+    rng = check_random_state(427)
+
+    X = rng.randn(n_trials, n_channels, *sig_shape)
+    z = rng.randn(n_trials, n_atoms, *valid_shape)
+
+    D = rng.randn(n_atoms, n_channels, *atom_support)
+    D_shape = D.shape
+
+    # Test gradient D
+    assert D_shape == _gradient_d(X, z, D, 'l2', loss_params={}).shape
+
+    def pobj(ds):
+        return _objective(X, z, ds.reshape(D_shape), 'l2',
+                          loss_params={})
+
+    def grad(ds):
+        return _gradient_d(X, z, ds, loss='l2', flatten=True,
+                           loss_params={})
+
+    gradient_checker(pobj, grad, np.prod(D.shape), n_checks=n_checks,
+                     grad_name="gradient D for loss '{}'".format('l2'),
+                     rtol=1e-4)
+
+    # Test gradient z
+
+    z0_shape = z[0].shape
+    assert z0_shape == _gradient_zi(X, z, D, 'l2', loss_params={}).shape
+
+    def pobj(zs):
+        return _objective(X[:1], zs.reshape((1, *z0_shape)), D, 'l2',
+                          loss_params={})
+
+    def grad(zs):
+        return gradient_zi(X[0], zs, D, loss='l2', flatten=True,
+                           loss_params={})
+
+    gradient_checker(pobj, grad, np.prod(z[0].shape), n_checks=n_checks,
+                     debug=True, grad_name="gradient z for loss '{}'"
+                     .format('l2'), rtol=1e-4)
