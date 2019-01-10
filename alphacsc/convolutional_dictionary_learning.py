@@ -369,3 +369,33 @@ class GreedyCDL(ConvolutionalDictionaryLearning):
             algorithm='greedy', lmbd_max=lmbd_max, raise_on_increase=True,
             loss='l2', use_sparse_z=False, n_jobs=n_jobs, verbose=verbose,
             callback=None, random_state=random_state, name="GreedyCDL")
+
+
+class DicodCDL(ConvolutionalDictionaryLearning):
+    _default = {}
+    _default.update(DEFAULT)
+    _default['desc'] = ("Batch algorithm for convolutional dictionary "
+                        "learning with DICOD")
+    _default['algorithm'] = "    Batch algorithm\n"
+    __doc__ = DOC_FMT.format(**_default)
+
+    def __init__(self, n_atoms, atom_support, reg=0.1, n_iter=60, n_jobs=1,
+                 dicod_kwargs={}, unbiased_z_hat=False, solver_d_kwargs={},
+                 window=False, lmbd_max='scaled', eps=1e-10, D_init=None,
+                 D_init_params={}, verbose=10, random_state=None,
+                 sort_atoms=False):
+        dicod_kwargs['n_jobs'] = n_jobs
+        super().__init__(
+            n_atoms, atom_support, reg=reg, n_iter=n_iter,
+            solver_z='dicod', solver_z_kwargs=dicod_kwargs,
+            rank1=False, window=window, unbiased_z_hat=unbiased_z_hat,
+            sort_atoms=sort_atoms, solver_d_kwargs=solver_d_kwargs,
+            eps=eps, D_init=D_init, D_init_params=D_init_params,
+            algorithm='batch', lmbd_max=lmbd_max, raise_on_increase=True,
+            loss='l2', use_sparse_z=False, n_jobs=1, verbose=verbose,
+            callback=None, random_state=random_state, name="GreedyCDL")
+
+    def fit(self, X, y=None):
+        print("Start learning dictionary with {}D convolution"
+              .format(X.ndim - 2))
+        super().fit(X, y=y)

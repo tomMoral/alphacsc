@@ -156,8 +156,6 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
         for size_ax, size_atom_ax in zip(sig_shape, atom_support)])
 
     assert not (freeze_support and z0_i is None), 'Impossible !'
-    if freeze_support and solver == "dicod":
-        solver = "lgcd"
 
     if is_lil(z0_i) and solver != "lgcd":
         raise NotImplementedError()
@@ -267,11 +265,18 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
         hostfile = solver_kwargs.get('hostfile', '')
         max_iter = int(solver_kwargs.get('max_iter', 1e9))
         strategy = solver_kwargs.get('strategy', 'greedy')
+
+        if freeze_support:
+            n_jobs = 1
+        else:
+            z0_i = None
+
         z_hat, ztz, ztX, pobj = dicod(
             X_i, D, reg=reg, z0=z0_i, n_seg=n_seg, strategy=strategy,
             n_jobs=n_jobs, hostfile=hostfile, tol=tol, max_iter=max_iter,
             z_positive=z_positive, return_ztz=return_ztz, timing=timing,
-            random_state=random_state, verbose=1
+            random_state=random_state, verbose=1,
+            freeze_support=freeze_support
         )
     else:
         raise ValueError("Unrecognized solver %s. Must be 'ista', 'fista',"

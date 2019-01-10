@@ -139,7 +139,7 @@ def test_learn_d_z_multi_2d(window):
     solver_z_kwargs = dict(max_iter=1000)
 
     pobj, times, D_hat, z_hat, reg = learn_d_z_multi(
-        X, n_atoms, atom_support, random_state=rng, n_iter=30, eps=-np.inf,
+        X, n_atoms, atom_support, random_state=rng, n_iter=10, eps=-np.inf,
         rank1=False, lmbd_max='scaled', solver_z='dicod', window=window,
         solver_z_kwargs=solver_z_kwargs, raise_on_increase=True, verbose=10)
 
