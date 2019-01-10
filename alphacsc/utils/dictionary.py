@@ -102,4 +102,5 @@ def tukey_window(atom_support):
         slice_ax[i] = slice(None)
         slice_ax = tuple(slice_ax)
         window *= signal.tukey(atom_support[i])[slice_ax]
+    window[window == 0] = 1e-9
     return window

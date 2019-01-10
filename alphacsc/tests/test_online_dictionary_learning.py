@@ -1,6 +1,7 @@
 import pytest
 import numpy as np
 
+
 from alphacsc.utils import check_random_state
 from alphacsc.online_dictionary_learning import OnlineCDL
 

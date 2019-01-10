@@ -7,6 +7,9 @@ from .compute_constants import compute_DtD
 from . import check_random_state
 
 
+MIN_STEP_SIZE = 1e-20
+
+
 def _support_least_square(X, uv, z, debug=False):
     """WIP, not fonctional!"""
     n_trials, n_channels, n_times = X.shape
@@ -88,9 +91,10 @@ def fista(f_obj, f_grad, f_prox, step_size, x0, max_iter, verbose=0,
         If debug is True, pobj contains the value of the cost function at each
         iteration.
     """
+    obj_uv = f_obj(x0)
     pobj = None
     if debug or timing:
-        pobj = [f_obj(x0)]
+        pobj = [obj_uv]
     if timing:
         times = [0]
         start = time.time()
@@ -99,7 +103,6 @@ def fista(f_obj, f_grad, f_prox, step_size, x0, max_iter, verbose=0,
         step_size = 1.
     if eps is None:
         eps = np.finfo(np.float32).eps
-    obj_uv = None
 
     tk = 1.0
     x_hat = x0.copy()
@@ -112,34 +115,33 @@ def fista(f_obj, f_grad, f_prox, step_size, x0, max_iter, verbose=0,
         grad[:] = f_grad(x_hat_aux)
 
         if adaptive_step_size:
+
+            def compute_obj_and_step(step_size, return_x_hat=False):
+                x_hat = f_prox(x_hat_aux - step_size * grad,
+                               step_size=step_size)
+                pobj = f_obj(x_hat)
+                if return_x_hat:
+                    return pobj, x_hat
+                else:
+                    return pobj
+
             if scipy_line_search:
-
-                def f_obj_(x_hat):
-                    x_hat, step_size = x_hat[:-1], x_hat[-1]
-                    x_hat = np.reshape(x_hat, x0.shape)
-                    return f_obj(f_prox(x_hat, step_size=step_size))
-
-                scipy_grad = np.r_[grad.ravel(), 1]
-                scipy_x = np.r_[x_hat.ravel(), 0]
-                step_size, _, obj_uv = optimize.linesearch.line_search_armijo(
-                    f_obj_, scipy_x, -scipy_grad, scipy_grad, obj_uv,
-                    c1=1e-5, alpha0=step_size)
-                if step_size is None:
-                    step_size = 0
-                x_hat_aux -= step_size * grad
-                x_hat_aux = f_prox(x_hat_aux, step_size=step_size)
+                norm_grad = np.dot(grad.ravel(), grad.ravel())
+                step_size, obj_uv = optimize.linesearch.scalar_search_armijo(
+                    compute_obj_and_step, obj_uv, -norm_grad, c1=1e-5,
+                    alpha0=step_size, amin=MIN_STEP_SIZE)
+                if step_size is not None:
+                    # compute the next point
+                    x_hat_aux -= step_size * grad
+                    x_hat_aux = f_prox(x_hat_aux, step_size=step_size)
 
             else:
-
-                def f(step_size):
-                    x_hat = f_prox(x_hat_aux - step_size * grad,
-                                   step_size=step_size)
-                    pobj = f_obj(x_hat)
-                    return pobj, x_hat
-
+                from functools import partial
+                f = partial(compute_obj_and_step, return_x_hat=True)
                 obj_uv, x_hat_aux, step_size = _adaptive_step_size(
                     f, obj_uv, alpha=step_size)
-            if step_size is None or step_size < 1e-20:
+
+            if step_size is None or step_size < MIN_STEP_SIZE:
                 # We did not find a valid step size. We should restart
                 # the momentum for APGD or stop the algorithm for PDG.
                 x_hat_aux = x_hat
@@ -210,7 +212,7 @@ def _adaptive_step_size(f, f0=None, alpha=None, tau=2):
     if i == 0:
         alpha /= tau * tau
         f_alpha, x_alpha = f(alpha)
-        while f0 <= f_alpha and alpha > 1e-20:
+        while f0 <= f_alpha and alpha > MIN_STEP_SIZE:
             alpha /= tau
             f_alpha, x_alpha = f(alpha)
         return f_alpha, x_alpha, alpha

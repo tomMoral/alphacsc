@@ -19,14 +19,6 @@ from .loss_and_gradient import gradient_uv, gradient_d
 from .utils.shape_manipulation import get_valid_shape
 
 
-def safe_divide(a, b, inplace=True):
-    if inplace:
-        a /= b # + np.isclose(b, 0)
-        return a
-    else:
-        return a / (b + np.isclose(b, 0))
-
-
 def prox_uv(uv, step_size=0, uv_constraint='joint', n_channels=None,
             return_norm=False):
     if uv_constraint == 'joint':
@@ -47,7 +39,7 @@ def prox_uv(uv, step_size=0, uv_constraint='joint', n_channels=None,
         raise ValueError('Unknown uv_constraint: %s.' % (uv_constraint, ))
 
     if return_norm:
-        return uv, norm_uv.squeeze()
+        return uv, norm_uv.squeeze(axis=1)
     else:
         return uv
 
@@ -61,7 +53,8 @@ def prox_d(D, step_size=0, return_norm=False):
     D /= norm_d
 
     if return_norm:
-        return D, norm_d.squeeze()
+        squeeze_axis = tuple(range(1, D.ndim))
+        return D, norm_d.squeeze(axis=squeeze_axis)
     else:
         return D
 
@@ -120,7 +113,7 @@ def update_uv(X, z, uv_hat0, constants=None, b_hat_0=None, debug=False,
     if window:
         tukey_window_ = tukey_window(atom_support)[None]
         uv_hat0 = uv_hat0.copy()
-        safe_divide(uv_hat0[:, n_channels:], tukey_window_)
+        uv_hat0[:, n_channels:] /= tukey_window_
 
     if solver_d == 'alternate':
         msg = "alternate solver should be used with separate constraints"
@@ -159,7 +152,7 @@ def update_uv(X, z, uv_hat0, constants=None, b_hat_0=None, debug=False,
             uv = prox_uv(uv, uv_constraint=uv_constraint,
                          n_channels=n_channels)
             if window:
-                safe_divide(uv[:, n_channels:], tukey_window_)
+                uv[:, n_channels:] /= tukey_window_
             return uv
 
         uv_hat, pobj = fista(objective, grad, prox, None, uv_hat0, max_iter,
@@ -184,7 +177,7 @@ def update_uv(X, z, uv_hat0, constants=None, b_hat_0=None, debug=False,
                 v *= tukey_window_
             v /= np.maximum(1., np.linalg.norm(v, axis=1, keepdims=True))
             if window:
-                v = safe_divide(v, tukey_window_)
+                v /= tukey_window_
             return v
 
         pobj = []
@@ -309,7 +302,7 @@ def update_d(X, z, D_hat0, constants=None, b_hat_0=None, debug=False,
 
     if window:
         tukey_window_ = tukey_window(atom_support)[None, None]
-        D_hat0 = safe_divide(D_hat0, tukey_window_, inplace=False)
+        D_hat0 = D_hat0 / tukey_window_
 
     if loss == 'l2' and constants is None:
         constants = _get_d_update_constants(X, z)
@@ -339,7 +332,7 @@ def update_d(X, z, D_hat0, constants=None, b_hat_0=None, debug=False,
                 D *= tukey_window_
             D = prox_d(D)
             if window:
-                D = safe_divide(D, tukey_window_)
+                D /= tukey_window_
             return D
 
         D_hat, pobj = fista(objective, grad, prox, None, D_hat0, max_iter,
