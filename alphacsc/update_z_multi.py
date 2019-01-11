@@ -268,15 +268,13 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
 
         if freeze_support:
             n_jobs = 1
-        else:
-            z0_i = None
 
         z_hat, ztz, ztX, pobj = dicod(
             X_i, D, reg=reg, z0=z0_i, n_seg=n_seg, strategy=strategy,
             n_jobs=n_jobs, hostfile=hostfile, tol=tol, max_iter=max_iter,
             z_positive=z_positive, return_ztz=return_ztz, timing=timing,
             random_state=random_state, verbose=1,
-            freeze_support=freeze_support
+            freeze_support=freeze_support,
         )
     else:
         raise ValueError("Unrecognized solver %s. Must be 'ista', 'fista',"

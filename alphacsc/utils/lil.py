@@ -54,7 +54,8 @@ def get_nnz_and_size(z_hat):
                          ).sum(axis=0)
         z_size = len(z_hat) * np.prod(z_hat[0].shape)
     else:
-        z_nnz = np.sum(z_hat != 0, axis=(0, 2))
+        sum_axis = (0,) + tuple(range(2, z_hat.ndim))
+        z_nnz = np.sum(z_hat != 0, axis=sum_axis)
         z_size = z_hat.size
     return z_nnz, z_size
 
