@@ -7,7 +7,7 @@ from .compute_constants import compute_DtD
 from . import check_random_state
 
 
-MIN_STEP_SIZE = 1e-20
+MIN_STEP_SIZE = 1e-10
 
 
 def _support_least_square(X, uv, z, debug=False):
@@ -109,7 +109,13 @@ def fista(f_obj, f_grad, f_prox, step_size, x0, max_iter, verbose=0,
     x_hat_aux = x_hat.copy()
     grad = np.empty(x_hat.shape)
     diff = np.empty(x_hat.shape)
+    last_up = t_start = time.time()
     for ii in range(max_iter):
+        t_update = time.time()
+        if verbose > 1 and t_update - last_up > 1:
+            print("\r[FISTA:PROGRESS] {:.0f}s - {:7.2%} iterations"
+                  .format(t_update - t_start, ii / max_iter),
+                  end="", flush=True)
         has_restarted = False
 
         grad[:] = f_grad(x_hat_aux)
@@ -174,9 +180,9 @@ def fista(f_obj, f_grad, f_prox, step_size, x0, max_iter, verbose=0,
             raise RuntimeError("The D update have diverged.")
     else:
         if verbose > 1:
-            print('[{}] update did not converge'.format(name))
-    if verbose > 5:
-        print('[{}]: {} iterations'.format(name, ii + 1))
+            print('\r[{}] update did not converge'.format(name))
+    if verbose > 1:
+        print('\r[{}]: {} iterations'.format(name, ii + 1))
 
     if timing:
         return x_hat, pobj, times

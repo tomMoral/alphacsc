@@ -133,7 +133,7 @@ class ConvolutionalDictionaryLearning(TransformerMixin):
                  D_init=None, D_init_params={},
                  algorithm='batch', algorithm_params={},
                  alpha=.8, batch_size=1, batch_selection='random',
-                 use_sparse_z=False, unbiased_z_hat=False,
+                 use_sparse_z=False, unbiased_z_hat=False, z_positive=True,
                  verbose=10, callback=None, random_state=None, name="_CDL",
                  raise_on_increase=True, sort_atoms=False):
 
@@ -158,6 +158,7 @@ class ConvolutionalDictionaryLearning(TransformerMixin):
         # Z-step parameters
         self.solver_z = solver_z
         self.solver_z_kwargs = solver_z_kwargs
+        self.z_positive = z_positive
         self.use_sparse_z = use_sparse_z
         self.unbiased_z_hat = unbiased_z_hat
 
@@ -186,7 +187,7 @@ class ConvolutionalDictionaryLearning(TransformerMixin):
             reg=self.reg, lmbd_max=self.lmbd_max,
             loss=self.loss, loss_params=self.loss_params,
             rank1=self.rank1, window=self.window,
-            uv_constraint=self.uv_constraint,
+            uv_constraint=self.uv_constraint, z_positive=self.z_positive,
             algorithm=self.algorithm, algorithm_params=self.algorithm_params,
             n_iter=self.n_iter, eps=self.eps,
             solver_z=self.solver_z, solver_z_kwargs=self.solver_z_kwargs,
@@ -212,7 +213,7 @@ class ConvolutionalDictionaryLearning(TransformerMixin):
         if self.unbiased_z_hat:
             if self.verbose > 0:
                 print("Refitting the activation to avoid amplitude bias...")
-            z_hat, _, _ = update_z_multi(
+            z_hat, *_ = update_z_multi(
                 X, self._D_hat, z0=z_hat, n_jobs=self.n_jobs,
                 reg=0, freeze_support=True,
                 solver=self.solver_z, solver_kwargs=self.solver_z_kwargs,
@@ -226,7 +227,7 @@ class ConvolutionalDictionaryLearning(TransformerMixin):
         """Returns sparse codes associated to the signals X for the dictionary.
         """
         self._check_fitted()
-        z_hat, _, _ = update_z_multi(
+        z_hat, *_ = update_z_multi(
             X, self._D_hat, reg=self.reg_, n_jobs=self.n_jobs,
             solver=self.solver_z, solver_kwargs=self.solver_z_kwargs,
             loss=self.loss, loss_params=self.loss_params)
@@ -234,7 +235,7 @@ class ConvolutionalDictionaryLearning(TransformerMixin):
         if self.unbiased_z_hat:
             if self.verbose > 0:
                 print("Refitting the activation to avoid amplitude bias...")
-            z_hat, _, _ = update_z_multi(
+            z_hat, *_ = update_z_multi(
                 X, self._D_hat, z0=z_hat, n_jobs=self.n_jobs,
                 reg=0, freeze_support=True,
                 solver=self.solver_z, solver_kwargs=self.solver_z_kwargs,
@@ -380,20 +381,20 @@ class DicodCDL(ConvolutionalDictionaryLearning):
     __doc__ = DOC_FMT.format(**_default)
 
     def __init__(self, n_atoms, atom_support, reg=0.1, n_iter=60, n_jobs=1,
-                 dicod_kwargs={}, unbiased_z_hat=False, solver_d_kwargs={},
-                 window=False, lmbd_max='scaled', eps=1e-10, D_init=None,
-                 D_init_params={}, verbose=10, random_state=None,
-                 sort_atoms=False):
+                 dicod_kwargs={}, unbiased_z_hat=False, z_positive=False,
+                 lmbd_max='scaled', window=False, sort_atoms=False, eps=1e-10,
+                 D_init=None, D_init_params={}, verbose=10, random_state=None,
+                 ):
         dicod_kwargs['n_jobs'] = n_jobs
         super().__init__(
             n_atoms, atom_support, reg=reg, n_iter=n_iter,
             solver_z='dicod', solver_z_kwargs=dicod_kwargs,
-            rank1=False, window=window, unbiased_z_hat=unbiased_z_hat,
-            sort_atoms=sort_atoms, solver_d_kwargs=solver_d_kwargs,
+            z_positive=z_positive, unbiased_z_hat=unbiased_z_hat,
+            rank1=False, window=window, sort_atoms=sort_atoms,
             eps=eps, D_init=D_init, D_init_params=D_init_params,
-            algorithm='batch', lmbd_max=lmbd_max, raise_on_increase=True,
+            algorithm='batch', lmbd_max=lmbd_max, raise_on_increase=False,
             loss='l2', use_sparse_z=False, n_jobs=1, verbose=verbose,
-            callback=None, random_state=random_state, name="GreedyCDL")
+            callback=None, random_state=random_state, name="DicodCDL")
 
     def fit(self, X, y=None):
         print("Start learning dictionary with {}D convolution"

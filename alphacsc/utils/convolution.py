@@ -274,16 +274,26 @@ def tensordot_convolve(ztz, D):
 
     n_time_support = np.prod(atom_support)
 
-    G = np.zeros(D.shape)
-    axis_sum = list(range(2, D.ndim))
-    D_revert = np.flip(D, axis=axis_sum)
-    for t in range(n_time_support):
-        pt = np.unravel_index(t, atom_support)
-        ztz_slice = tuple(
-            [Ellipsis] +
-            [slice(v, v + size_ax) for v, size_ax in zip(pt, atom_support)])
-        G[(Ellipsis, *pt)] = np.tensordot(
-            ztz[ztz_slice], D_revert, axes=([1] + axis_sum, [0] + axis_sum))
+    if n_time_support < 512:
+
+        G = np.zeros(D.shape)
+        axis_sum = list(range(2, D.ndim))
+        D_revert = np.flip(D, axis=axis_sum)
+        for t in range(n_time_support):
+            pt = np.unravel_index(t, atom_support)
+            ztz_slice = tuple([Ellipsis] + [
+                slice(v, v + size_ax) for v, size_ax in zip(pt, atom_support)])
+            G[(Ellipsis, *pt)] = np.tensordot(ztz[ztz_slice], D_revert,
+                                              axes=([1] + axis_sum,
+                                                    [0] + axis_sum))
+    else:
+        if len(atom_support) == 1:
+            convolution_op = np.convolve
+        else:
+            convolution_op = signal.fftconvolve
+        G = np.sum([[[convolution_op(ztz_kk, D_kp, mode='valid')
+                     for D_kp in D_k] for ztz_kk, D_k in zip(ztz_k, D)]
+                   for ztz_k in ztz], axis=1)
     return G
 
 

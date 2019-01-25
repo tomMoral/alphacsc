@@ -32,7 +32,7 @@ def learn_d_z_multi(X, n_atoms, atom_support, n_iter=60, n_jobs=1,
                     solver_z='l-bfgs', solver_z_kwargs=dict(),
                     solver_d='alternate_adaptive', solver_d_kwargs=dict(),
                     D_init=None, D_init_params=dict(),
-                    unbiased_z_hat=False, use_sparse_z=False,
+                    unbiased_z_hat=False, use_sparse_z=False, z_positive=True,
                     stopping_pobj=None, raise_on_increase=True,
                     verbose=10, callback=None, random_state=None, name="DL",
                     window=False, sort_atoms=False):
@@ -157,7 +157,7 @@ def learn_d_z_multi(X, n_atoms, atom_support, n_iter=60, n_jobs=1,
         check_1d_convolution(atom_support)
 
     # initialization
-    start = time.time()
+    t_start = time.time()
     rng = check_random_state(random_state)
 
     D_hat = init_dictionary(X, n_atoms, atom_support, D_init=D_init,
@@ -165,7 +165,7 @@ def learn_d_z_multi(X, n_atoms, atom_support, n_iter=60, n_jobs=1,
                             D_init_params=D_init_params, random_state=rng,
                             window=window)
     b_hat_0 = rng.randn(n_atoms * (n_channels + np.prod(atom_support)))
-    init_duration = time.time() - start
+    init_duration = time.time() - t_start
 
     z_hat = lil.init_zeros(use_sparse_z, n_trials, n_atoms, valid_shape)
 
@@ -184,6 +184,7 @@ def learn_d_z_multi(X, n_atoms, atom_support, n_iter=60, n_jobs=1,
 
     def compute_z_func(X, z_hat, D_hat, reg=None):
         return update_z_multi(X, D_hat, reg=reg, z0=z_hat,
+                              z_positive=z_positive,
                               solver=solver_z, solver_kwargs=z_kwargs,
                               loss=loss, loss_params=loss_params,
                               n_jobs=n_jobs, return_ztz=True)
@@ -254,19 +255,19 @@ def learn_d_z_multi(X, n_atoms, atom_support, n_iter=60, n_jobs=1,
 
     # recompute z_hat with no regularization and keeping the support fixed
     if unbiased_z_hat:
-        start_unbiased_z_hat = time.time()
-        z_hat, _, _ = update_z_multi(
+        t_start_unbiased_z_hat = time.time()
+        z_hat, *_ = update_z_multi(
             X, D_hat, reg=0, z0=z_hat, n_jobs=n_jobs, solver=solver_z,
             solver_kwargs=solver_z_kwargs, freeze_support=True, loss=loss,
             loss_params=loss_params)
         if verbose > 1:
             print("[{}] Compute the final z_hat with support freeze in "
-                  "{:.2f}s".format(name, time.time() - start_unbiased_z_hat))
+                  "{:.2f}s".format(name, time.time() - t_start_unbiased_z_hat))
 
     times[0] += init_duration
 
     if verbose > 0:
-        print("[%s] Fit in %.1fs" % (name, time.time() - start))
+        print("[%s] Fit in %.1fs" % (name, time.time() - t_start))
 
     return pobj, times, D_hat, z_hat, reg
 
@@ -328,13 +329,16 @@ def _batch_learn(X, D_hat, z_hat, compute_z_func, compute_d_func,
             print('[{}] lambda = {:.3e}'.format(name, np.mean(reg_)))
 
         # Compute z update
-        start = time.time()
-        z_hat, constants['ztz'], constants['ztX'] = compute_z_func(
+        t_start = time.time()
+        z_hat, constants['ztz'], constants['ztX'], cost = compute_z_func(
             X, z_hat, D_hat, reg=reg_)
 
         # monitor cost function
-        times.append(time.time() - start)
-        pobj.append(obj_func(X, z_hat, D_hat, reg=reg_))
+        # times.append(time.time() - t_start)
+        if cost is None:
+            pobj.append(obj_func(X, z_hat, D_hat, reg=reg_))
+        else:
+            pobj.append(cost)
 
         z_nnz, z_size = lil.get_nnz_and_size(z_hat)
         if verbose > 5:
@@ -350,11 +354,11 @@ def _batch_learn(X, D_hat, z_hat, compute_z_func, compute_d_func,
             break
 
         # Compute D update
-        start = time.time()
+        t_start = time.time()
         D_hat = compute_d_func(X, z_hat, D_hat, constants)
 
         # monitor cost function
-        times.append(time.time() - start)
+        times.append(time.time() - t_start)
         pobj.append(obj_func(X, z_hat, D_hat, reg=reg_))
 
         null_atom_indices = np.where(z_nnz == 0)[0]
@@ -419,7 +423,7 @@ def _online_learn(X, D_hat, z_hat, compute_z_func, compute_d_func,
             print('[{}] lambda = {:.3e}'.format(name, np.mean(reg_)))
 
         # Compute z update
-        start = time.time()
+        t_start = time.time()
         if batch_selection == 'random':
             i0 = rng.choice(n_trials, batch_size, replace=False)
         elif batch_selection == 'cyclic':
@@ -429,14 +433,18 @@ def _online_learn(X, D_hat, z_hat, compute_z_func, compute_d_func,
             raise NotImplementedError(
                 "the '{}' batch_selection strategy for the online learning is "
                 "not implemented.".format(batch_selection))
-        z_hat[i0], ztz, ztX = compute_z_func(X[i0], z_hat[i0], D_hat, reg=reg_)
+        z_hat[i0], ztz, ztX, cost = compute_z_func(X[i0], z_hat[i0], D_hat,
+                                                   reg=reg_)
 
         constants['ztz'] = alpha * constants['ztz'] + ztz
         constants['ztX'] = alpha * constants['ztX'] + ztX
 
         # monitor cost function
-        times.append(time.time() - start)
-        pobj.append(obj_func(X, z_hat, D_hat, reg=reg_))
+        times.append(time.time() - t_start)
+        if cost is not None:
+            pobj.append(cost)
+        else:
+            pobj.append(obj_func(X, z_hat, D_hat, reg=reg_))
 
         z_nnz, z_size = lil.get_nnz_and_size(z_hat)
         if verbose > 5:
@@ -452,11 +460,11 @@ def _online_learn(X, D_hat, z_hat, compute_z_func, compute_d_func,
             break
 
         # Compute D update
-        start = time.time()
+        t_start = time.time()
         D_hat = compute_d_func(X, z_hat, D_hat, constants)
 
         # monitor cost function
-        times.append(time.time() - start)
+        times.append(time.time() - t_start)
         pobj.append(obj_func(X, z_hat, D_hat, reg=reg_))
 
         null_atom_indices = np.where(z_nnz == 0)[0]

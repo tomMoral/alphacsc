@@ -296,8 +296,7 @@ def update_d(X, z, D_hat0, constants=None, b_hat_0=None, debug=False,
     D_hat : array, shape (n_atoms, n_channels, n_times_atom)
         The atoms to learn from the data.
     """
-    n_trials, n_atoms, *valid_shape = get_z_shape(z)
-    _, n_channels, *sig_shape = X.shape
+    n_trials, n_channels, *sig_shape = X.shape
     n_atoms, n_channels, *atom_support = D_hat0.shape
 
     if window:
@@ -309,7 +308,7 @@ def update_d(X, z, D_hat0, constants=None, b_hat_0=None, debug=False,
 
     def objective(D, full=False):
         if window:
-            D = D * tukey_window_ + (tukey_window_ == 0)
+            D = D * tukey_window_
         if loss == 'l2':
             return compute_objective(D=D, constants=constants)
         return compute_X_and_objective_multi(X, z, D_hat=D, loss=loss,
@@ -335,10 +334,21 @@ def update_d(X, z, D_hat0, constants=None, b_hat_0=None, debug=False,
                 D /= tukey_window_
             return D
 
-        D_hat, pobj = fista(objective, grad, prox, None, D_hat0, max_iter,
-                            verbose=verbose, momentum=momentum, eps=eps,
-                            adaptive_step_size=True, debug=debug,
-                            name="Update D")
+        if False and 'ztz' in constants and loss == 'l2':
+            ztz = constants['ztz']
+            n_atoms, _, *ztz_shape = ztz.shape
+            step_size = 1 / np.linalg.norm(ztz.reshape(n_atoms, n_atoms, -1),
+                                           axis=(1, 2)).max()
+            adaptive_step_size = False
+        else:
+            step_size = None
+            adaptive_step_size = True
+
+        D_hat, pobj = fista(
+            objective, grad, prox, x0=D_hat0, max_iter=max_iter,
+            step_size=step_size, adaptive_step_size=adaptive_step_size,
+            eps=eps, momentum=momentum, verbose=verbose, debug=debug,
+            name="Update D")
 
     else:
         raise ValueError('Unknown solver_d: %s' % (solver_d, ))

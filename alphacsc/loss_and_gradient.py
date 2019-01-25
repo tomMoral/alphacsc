@@ -316,7 +316,7 @@ def gradient_d(D=None, X=None, z=None, constants=None, reg=None,
     if flatten:
         if z is None:
             n_channels = constants['n_channels']
-            n_atoms, _, ztz_support = constants['ztz'].shape
+            n_atoms, _, *ztz_support = constants['ztz'].shape
             atom_support = tuple((np.array(ztz_support) + 1) // 2)
         else:
             n_trial, n_channels, *sig_shape = X.shape
@@ -448,8 +448,10 @@ def _l2_objective(X=None, X_hat=None, D=None, constants=None):
 
     # else, compute the l2 norm of the residual
     assert X is not None and X_hat is not None
-    residual = X - X_hat
-    return 0.5 * np.dot(residual.ravel(), residual.ravel())
+    X, X_hat = X.ravel(), X_hat.ravel()
+    return (np.dot(X, X) + np.dot(X_hat, X_hat)) / 2 - np.dot(X, X_hat)
+    # residual = X - X_hat
+    # return 0.5 * np.dot(residual.ravel(), residual.ravel())
 
 
 def grad_D_dot_D(grad_D, D, constants=None):

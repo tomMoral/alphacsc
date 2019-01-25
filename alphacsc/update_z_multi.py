@@ -99,7 +99,7 @@ def update_z_multi(X, D, reg, z0=None, solver='l-bfgs', solver_kwargs=dict(),
         for i, seed in enumerate(parallel_seeds))
 
     # Post process the results to get separate objects
-    z_hats, pobj, times = [], [], []
+    z_hats, pobj, times, cost = [], [], [], 0
     if loss == 'l2' and return_ztz:
         ztz_shape = tuple([2 * size_atom_ax - 1
                            for size_atom_ax in atom_support])
@@ -107,17 +107,21 @@ def update_z_multi(X, D, reg, z0=None, solver='l-bfgs', solver_kwargs=dict(),
         ztX = np.zeros((n_atoms, n_channels, *atom_support))
     else:
         ztz, ztX = None, None
-    for z_hat, ztz_i, ztX_i, pobj_i, times_i in results:
+    for z_hat, ztz_i, ztX_i, pobj_i, times_i, c in results:
         z_hats.append(z_hat), pobj.append(pobj_i), times.append(times_i)
         if loss == 'l2' and return_ztz:
             ztz += ztz_i
             ztX += ztX_i
+        if c is not None:
+            cost += c
+        else:
+            cost = None
 
     # If z_hat is a ndarray, stack and reorder the columns
     if not is_list_of_lil(z0):
         z_hats = np.array(z_hats).reshape(n_trials, n_atoms, *valid_shape)
 
-    return z_hats, ztz, ztX
+    return z_hats, ztz, ztX, cost
 
 
 class BoundGenerator(object):
@@ -175,7 +179,7 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
     if z0_i is None:
         z0_i = np.zeros(n_atoms, *valid_shape)
 
-    times, pobj = None, None
+    times, pobj, cost = None, None, None
     if timing:
         times = [init_timing]
         pobj = [func_and_grad(z0_i)[0]]
@@ -221,6 +225,7 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
             return soft_thresholding(z_hat, step_size * reg,
                                      positive=z_positive)
 
+        z0_i = z0_i.ravel()
         output = fista(objective, grad, prox, step_size=None, x0=z0_i,
                        adaptive_step_size=True, timing=timing,
                        name="Update z", **fista_kwargs)
@@ -252,7 +257,7 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
 
     elif solver == "dicod":
         try:
-            from dicod_python.dicod import dicod
+            from dicod import dicod
         except ImportError:
             raise NotImplementedError("You need to install the dicod package "
                                       "to be able to use z_solver='dicod'.")
@@ -269,7 +274,7 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
         if freeze_support:
             n_jobs = 1
 
-        z_hat, ztz, ztX, pobj = dicod(
+        z_hat, ztz, ztX, pobj, cost = dicod(
             X_i, D, reg=reg, z0=z0_i, n_seg=n_seg, strategy=strategy,
             n_jobs=n_jobs, hostfile=hostfile, tol=tol, max_iter=max_iter,
             z_positive=z_positive, return_ztz=return_ztz, timing=timing,
@@ -295,4 +300,4 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
     else:
         ztz, ztX = None, None
 
-    return z_hat, ztz, ztX, pobj, times
+    return z_hat, ztz, ztX, pobj, times, cost

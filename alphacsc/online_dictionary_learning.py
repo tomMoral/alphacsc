@@ -62,7 +62,7 @@ class OnlineCDL(ConvolutionalDictionaryLearning):
 
         # Compute the activations for the current batch and get the sufficient
         # statistic for the dictionary update
-        z_hat, ztz, ztX = update_z_multi(
+        z_hat, ztz, ztX, *_ = update_z_multi(
             X, self._D_hat, reg=self.reg_,
             solver=self.solver_z, solver_kwargs=self.solver_z_kwargs,
             loss=self.loss, loss_params=self.loss_params,

@@ -1,6 +1,8 @@
 import numba
 import numpy as np
 
+from scipy.signal import fftconvolve
+
 from .shape_manipulation import get_valid_shape
 
 
@@ -60,6 +62,7 @@ def _compute_DtD_D(D):  # pragma: no cover
 
 def compute_ztz(z, atom_support):
     if z.ndim == 3:
+        assert len(atom_support) == 1, "Wrong convolution dimension?"
         return _compute_ztz_numba(z, atom_support[0])
 
     n_trials, n_atoms, *valid_shape = z.shape
@@ -71,12 +74,27 @@ def compute_ztz(z, atom_support):
 
     padding_shape = np.asarray([(0, 0), (0, 0)] + padding_shape, dtype='i')
     z_pad = np.pad(z, padding_shape, mode='constant')
-    ztz = np.empty(ztz_shape)
-    for i in range(ztz.size):
-        i0 = k0, k1, *pt = np.unravel_index(i, ztz.shape)
-        zk1_slice = tuple([slice(None), k1] + [
-            slice(v, v + size_ax) for v, size_ax in zip(pt, valid_shape)])
-        ztz[i0] = np.dot(z[:, k0].ravel(), z_pad[zk1_slice].ravel())
+
+    # Choose between sparse and fft
+    z_nnz = z.nonzero()
+    ratio_nnz = len(z_nnz[0]) / z.size
+    if ratio_nnz < .05:
+        ztz = np.zeros(ztz_shape)
+        for i0, k0, *pt in zip(*z_nnz):
+            z_pad_slice = tuple([i0, slice(None)] + [
+                slice(v, v + 2 * size_ax - 1)
+                for v, size_ax in zip(pt, atom_support)])
+            ztz[k0] += z[(i0, k0, *pt)] * z_pad[z_pad_slice]
+    else:
+        # compute the cross correlation between z and z_pad
+        flip_axis = tuple(range(1, z.ndim))
+        z_pad = np.flip(z_pad, axis=flip_axis)
+        ztz = np.sum([[[fftconvolve(z_pad_k0, z_k, mode='valid')
+                        for z_k in zi]
+                       for z_pad_k0 in zi_pad]
+                      for zi, zi_pad in zip(z, z_pad)],
+                     axis=0)
+
     return ztz
 
 
