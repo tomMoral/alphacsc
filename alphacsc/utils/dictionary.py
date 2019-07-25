@@ -15,7 +15,11 @@ def get_D(uv_hat, n_channels):
     ------
     D: array (n_atoms, n_channels, n_times_atom)
     """
-
+    if uv_hat.ndim == 3:
+        msg = ("get_D was callled with an array of shape {}"
+               .format(uv_hat.shape))
+        assert uv_hat.shape[1] == n_channels, msg
+        return uv_hat
     return uv_hat[:, :n_channels, None] * uv_hat[:, None, n_channels:]
 
 

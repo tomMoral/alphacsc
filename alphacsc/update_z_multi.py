@@ -12,6 +12,7 @@ from joblib import Parallel, delayed
 
 from . import cython_code
 from .utils.optim import fista
+from .utils.dictionary import get_D
 from .utils import check_random_state
 from .loss_and_gradient import gradient_zi
 from .utils.lil import is_list_of_lil, is_lil
@@ -251,3 +252,22 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
         ztz, ztX = None, None
 
     return z_hat, ztz, ztX, pobj, times
+
+
+def update_z_dicod(encoder, X, D_hat, reg, z0=None, return_ztz=True):
+
+    n_trials, n_channels, n_times = X.shape
+    assert n_trials == 1
+    D_hat = get_D(D_hat, n_channels)
+
+    encoder.set_worker_D(D_hat)
+    encoder.set_worker_signal(X[0])
+    encoder.compute_z_hat()
+    z_hat = encoder.get_z_hat()
+
+    if return_ztz:
+        ztz, ztX = encoder.get_sufficient_statistics()
+    else:
+        ztz, ztX = None, None
+
+    return z_hat[None], ztz, ztX

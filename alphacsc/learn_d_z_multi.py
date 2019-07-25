@@ -14,11 +14,11 @@ from .utils import lil
 from .utils import check_dimension
 from .utils import check_random_state
 from .utils.convolution import sort_atoms_by_explained_variances
-from .utils.dictionary import get_lambda_max
+from .utils.dictionary import get_lambda_max, get_D
 from .utils.whitening import whitening
 from .init_dict import init_dictionary, get_max_error_dict
 from .loss_and_gradient import compute_X_and_objective_multi
-from .update_z_multi import update_z_multi
+from .update_z_multi import update_z_multi, update_z_dicod
 from .update_d_multi import update_uv, update_d
 
 
@@ -182,11 +182,41 @@ def learn_d_z_multi(X, n_atoms, n_times_atom, n_iter=60, n_jobs=1,
     if lmbd_max == "scaled":
         reg = reg * _lmbd_max
 
-    def compute_z_func(X, z_hat, D_hat, reg=None):
-        return update_z_multi(X, D_hat, reg=reg, z0=z_hat,
-                              solver=solver_z, solver_kwargs=z_kwargs,
-                              loss=loss, loss_params=loss_params,
-                              n_jobs=n_jobs, return_ztz=True)
+    if solver_z == 'dicod':
+        try:
+            from dicodile.update_z.distributed_sparse_encoder import\
+                DistributedSparseEncoder
+        except ImportError:
+            raise ImportError("For solver_z='dicodile', you need to install "
+                              "the dicodile package. See further details at "
+                              "https://github.com/tommoral/dicodile")
+        if loss != 'l2':
+            raise ValueError("Cannot use solver_z='dicod' with loss!='l2'.")
+        hostfile = z_kwargs.pop('hostfile', None)
+        encoder = DistributedSparseEncoder(n_jobs=n_jobs, hostfile=hostfile,
+                                           verbose=verbose)
+
+        tol = z_kwargs.get('tol', 1e-1)
+        max_iter = z_kwargs.get('max_iter', int(1e8))
+        dicod_params = dict(
+            tol=tol, max_iter=max_iter, verbose=verbose, reg=reg,
+            random_state=random_state, timeout=None,
+            strategy='greedy', n_seg='auto', soft_lock='border',
+            z_positive=False, timing=False, return_ztz=False,
+            freeze_support=False, debug=False,
+        )
+        D_hat_ = get_D(D_hat, n_channels)
+        encoder.init_workers(X[0], D_hat_, reg, dicod_params)
+
+        def compute_z_func(X, z_hat, D_hat, reg=None):
+            return update_z_dicod(encoder, X, D_hat, reg=reg, z0=z_hat,
+                                  return_ztz=True)
+    else:
+        def compute_z_func(X, z_hat, D_hat, reg=None):
+            return update_z_multi(X, D_hat, reg=reg, z0=z_hat,
+                                  solver=solver_z, solver_kwargs=z_kwargs,
+                                  loss=loss, loss_params=loss_params,
+                                  n_jobs=n_jobs, return_ztz=True)
 
     def obj_func(X, z_hat, D_hat, reg=None, return_X_hat=False):
         return compute_X_and_objective_multi(X, z_hat, D_hat,
@@ -248,6 +278,9 @@ def learn_d_z_multi(X, n_atoms, n_times_atom, n_iter=60, n_jobs=1,
             "Algorithm '{}' is not implemented to learn dictionary atoms."
             .format(algorithm))
 
+    if solver_z == 'dicod':
+        encoder.release_workers()
+
     if sort_atoms:
         D_hat, z_hat = sort_atoms_by_explained_variances(
             D_hat, z_hat, n_channels=n_channels)
@@ -257,7 +290,7 @@ def learn_d_z_multi(X, n_atoms, n_times_atom, n_iter=60, n_jobs=1,
         start_unbiased_z_hat = time.time()
         z_hat, _, _ = update_z_multi(
             X, D_hat, reg=0, z0=z_hat, n_jobs=n_jobs, solver=solver_z,
-            solver_kwargs=solver_z_kwargs, freeze_support=True, loss=loss,
+            solver_kwargs=z_kwargs, freeze_support=True, loss=loss,
             loss_params=loss_params)
         if verbose > 1:
             print("[{}] Compute the final z_hat with support freeze in "
