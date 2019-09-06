@@ -83,13 +83,17 @@ def update_z_multi(X, D, reg, z0=None, solver='l-bfgs', solver_kwargs=dict(),
     if z0 is None:
         z0 = np.zeros((n_trials, n_atoms, n_times_valid))
 
+    # Precompute DtD for all the parallel run to avoid large memory
+    # and duplicated computations
+    DtD = compute_DtD(D=D, n_channels=n_channels)
+
     # now estimate the codes
     delayed_update_z = delayed(_update_z_multi_idx)
 
     results = Parallel(n_jobs=n_jobs)(
-        delayed_update_z(X[i], D, reg, z0[i], debug, solver, solver_kwargs,
-                         freeze_support, loss, loss_params=loss_params,
-                         return_ztz=return_ztz,
+        delayed_update_z(X[i], D, reg, z0[i], DtD, debug,
+                         solver, solver_kwargs, freeze_support,
+                         loss, loss_params=loss_params, return_ztz=return_ztz,
                          timing=timing, random_state=seed)
         for i, seed in enumerate(parallel_seeds))
 
@@ -131,10 +135,10 @@ class BoundGenerator(object):
         return (0, np.inf)
 
 
-def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
-                        solver_kwargs=dict(), freeze_support=False, loss='l2',
-                        loss_params=dict(), return_ztz=False,
-                        timing=False, random_state=None):
+def _update_z_multi_idx(X_i, D, reg, z0_i=None, DtD=None, debug=False,
+                        solver='l-bfgs', solver_kwargs=dict(),
+                        freeze_support=False, loss='l2', loss_params=dict(),
+                        return_ztz=False, timing=False, random_state=None):
     t_start = time.time()
     n_channels, n_times = X_i.shape
     if D.ndim == 2:
@@ -146,13 +150,15 @@ def _update_z_multi_idx(X_i, D, reg, z0_i, debug, solver='l-bfgs',
 
     assert not (freeze_support and z0_i is None), 'Impossible !'
 
+    if z0_i is None:
+        z0_i = np.zeros((n_atoms, n_times_valid))
     if is_lil(z0_i) and solver != "lgcd":
         raise NotImplementedError()
 
     rng = check_random_state(random_state)
 
-    constants = {}
-    if solver == "lgcd":
+    constants = {'DtD': DtD}
+    if solver == "lgcd" and DtD is None:
         constants['DtD'] = compute_DtD(D=D, n_channels=n_channels)
     init_timing = time.time() - t_start
 
@@ -258,9 +264,11 @@ def update_z_dicod(encoder, X, D_hat, reg, z0=None, return_ztz=True):
 
     n_trials, n_channels, n_times = X.shape
     assert n_trials == 1
+
+    DtD = compute_DtD(D_hat, n_channels=n_channels)
     D_hat = get_D(D_hat, n_channels)
 
-    encoder.set_worker_D(D_hat)
+    encoder.set_worker_D(D_hat, DtD)
     encoder.set_worker_signal(X[0])
     encoder.compute_z_hat()
     z_hat = encoder.get_z_hat()

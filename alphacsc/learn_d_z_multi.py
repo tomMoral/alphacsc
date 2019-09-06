@@ -13,13 +13,14 @@ import numpy as np
 from .utils import lil
 from .utils import check_dimension
 from .utils import check_random_state
-from .utils.convolution import sort_atoms_by_explained_variances
-from .utils.dictionary import get_lambda_max, get_D
 from .utils.whitening import whitening
+from .update_d_multi import update_uv, update_d
+from .utils.compute_constants import compute_DtD
+from .utils.dictionary import get_lambda_max, get_D
+from .update_z_multi import update_z_multi, update_z_dicod
 from .init_dict import init_dictionary, get_max_error_dict
 from .loss_and_gradient import compute_X_and_objective_multi
-from .update_z_multi import update_z_multi, update_z_dicod
-from .update_d_multi import update_uv, update_d
+from .utils.convolution import sort_atoms_by_explained_variances
 
 
 def learn_d_z_multi(X, n_atoms, n_times_atom, n_iter=60, n_jobs=1,
@@ -203,10 +204,11 @@ def learn_d_z_multi(X, n_atoms, n_times_atom, n_iter=60, n_jobs=1,
             random_state=random_state, timeout=None,
             strategy='greedy', n_seg='auto', soft_lock='border',
             z_positive=False, timing=False, return_ztz=False,
-            freeze_support=False, debug=False,
+            precomputed_DtD=True, freeze_support=False, debug=False,
         )
+        DtD = compute_DtD(D_hat, n_channels=n_channels)
         D_hat_ = get_D(D_hat, n_channels)
-        encoder.init_workers(X[0], D_hat_, reg, dicod_params)
+        encoder.init_workers(X[0], D_hat_, reg, dicod_params, DtD=DtD)
 
         def compute_z_func(X, z_hat, D_hat, reg=None):
             return update_z_dicod(encoder, X, D_hat, reg=reg, z0=z_hat,
