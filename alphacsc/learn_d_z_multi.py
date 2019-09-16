@@ -204,7 +204,7 @@ def learn_d_z_multi(X, n_atoms, n_times_atom, n_iter=60, n_jobs=1,
             random_state=random_state, timeout=None,
             strategy='greedy', n_seg='auto', soft_lock='border',
             z_positive=False, timing=False, return_ztz=False,
-            precomputed_DtD=True, freeze_support=False, debug=False,
+            freeze_support=False, debug=False,
         )
         DtD = compute_DtD(D_hat, n_channels=n_channels)
         D_hat_ = get_D(D_hat, n_channels)
